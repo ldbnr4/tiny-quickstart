@@ -22,6 +22,11 @@ import {
   Products,
 } from "plaid";
 import path from "path";
+import cors from "cors";
+import LocalStorage from "node-localstorage";
+
+var localStorage = new LocalStorage.LocalStorage('./scratch');
+
 
 dotenv.config();
 const app: Application = express();
@@ -44,6 +49,7 @@ app.use(
   })
 );
 
+app.use(cors());
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
@@ -78,8 +84,8 @@ app.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const linkConfigObject: LinkTokenCreateRequest = {
-        user: { client_user_id: req.sessionID },
-        client_name: "Plaid's Tiny Quickstart",
+        user: { client_user_id: req.get("User-Id") ?? "" },
+        client_name: "Black Wall Street",
         language: "en",
         products: [Products.Auth],
         country_codes: [CountryCode.Us],
@@ -104,8 +110,10 @@ app.post(
 
       // FOR DEMO PURPOSES ONLY
       // Store access_token in DB instead of session storage
-      req.session.access_token = exchangeResponse.data.access_token;
-      res.json(true);
+      // req.session.access_token = exchangeResponse.data.access_token;
+      // res.json(exchangeResponse.data.access_token);
+      localStorage.setItem(req.body.user_id, exchangeResponse.data.access_token);
+      res.json(true)
     } catch (error) {
       next(error);
     }
@@ -114,16 +122,50 @@ app.post(
 
 // Fetches balance data using the Node client library for Plaid
 app.get(
-  "/api/data",
+  "/api/cash",
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const access_token = req.session.access_token ?? "";
+      // Consider ::accountsGet()
       const balanceResponse = await client.accountsBalanceGet({
-        access_token: access_token,
+        access_token: getAccessToken(req.get("User-Id") ?? ""),
       });
-      res.json({
-        Balance: balanceResponse.data,
+      // console.log(balanceResponse.data.accounts);
+      res.json(
+        balanceResponse.data.accounts.
+        map(account=>{
+          return {
+            name: account.name,
+            official_name: account.official_name,
+            available_balance: account.balances.available,
+            current_balance: account.balances.current,
+            type: account.subtype
+          }
+        }),
+      );
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+app.get("/api/transactions",
+  async (req: Request, res: Response, next: NextFunction)=> {
+    try {
+      const transactionsResponse = await client.transactionsSync({
+        access_token: getAccessToken(req.get("User-Id") ?? ""),
+        count: 10
       });
+      console.log(transactionsResponse.data.added);
+      res.json(
+        transactionsResponse.data.added.
+        map(tranasction=>{
+          return {
+            name: tranasction.merchant_name ?? tranasction.name,
+            time: tranasction.datetime,
+            amount: tranasction.amount
+          }
+        }),
+      );
     } catch (error) {
       next(error);
     }
@@ -136,7 +178,7 @@ app.get(
   "/api/is_account_connected",
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      return req.session.access_token
+      return localStorage.getItem(req.get("User-Id") ?? "") != null
         ? res.json({ status: true })
         : res.json({ status: false });
     } catch (error) {
@@ -144,6 +186,10 @@ app.get(
     }
   }
 );
+
+function getAccessToken(userId: string) {
+  return localStorage.getItem(userId)?.replace(/['"]+/g, '') ?? ""
+}
 
 type PotentialPlaidError = Error & {
   response?: {
