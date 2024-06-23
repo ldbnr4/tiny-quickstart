@@ -2,17 +2,19 @@
 server.js – Configures the Plaid client and uses Express to defines routes that call Plaid endpoints in the Sandbox environment.
 Utilizes the official Plaid node.js client library to make calls to the Plaid API.
 */
-import dotenv from "dotenv";
+import dotenv, { configDotenv } from "dotenv";
 import express, {
   ErrorRequestHandler,
   Request,
   Response,
   Application,
   NextFunction,
+  response,
 } from "express";
 import bodyParser from "body-parser";
 import session from "express-session";
 import {
+  AccountSubtype,
   Configuration,
   CountryCode,
   LinkTokenCreateRequest,
@@ -20,10 +22,15 @@ import {
   PlaidEnvironments,
   PlaidError,
   Products,
+  Transaction,
 } from "plaid";
 import path from "path";
 import cors from "cors";
 import LocalStorage from "node-localstorage";
+import { initializeApp, applicationDefault, cert } from 'firebase-admin/app';
+import { getFirestore, Timestamp, FieldValue, Filter } from 'firebase-admin/firestore';
+import { credential } from "firebase-admin";
+// var serviceAccount = require("black-wall-street-p3vmel-firebase-adminsdk-ua71v-bc6cdd10bb.json");
 
 var localStorage = new LocalStorage.LocalStorage('./scratch');
 
@@ -38,6 +45,25 @@ declare module "express-session" {
     access_token?: string;
   }
 }
+
+// Your web app's Firebase configuration
+const firebaseConfig = {
+  apiKey: "AIzaSyAcbQotmNlwZY6B4vwBfMYi_qBt7jJpf30",
+  authDomain: "black-wall-street-p3vmel.firebaseapp.com",
+  projectId: "black-wall-street-p3vmel",
+  storageBucket: "black-wall-street-p3vmel.appspot.com",
+  messagingSenderId: "639291841708",
+  appId: "1:639291841708:web:933776a64c676dd2025309"
+};
+
+// Initialize Firebase
+initializeApp(firebaseConfig);
+
+// initializeApp({
+//   credential: applicationDefault()
+// });
+
+const db = getFirestore();
 
 app.use(
   // FOR DEMO PURPOSES ONLY
@@ -84,7 +110,7 @@ app.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const linkConfigObject: LinkTokenCreateRequest = {
-        user: { client_user_id: req.get("User-Id") ?? "" },
+        user: { client_user_id: req.get("User-Id") ?? "default" },
         client_name: "Black Wall Street",
         language: "en",
         products: [Products.Auth],
@@ -92,6 +118,7 @@ app.get(
         redirect_uri: process.env.PLAID_SANDBOX_REDIRECT_URI,
       };
       const tokenResponse = await client.linkTokenCreate(linkConfigObject);
+      console.log("created a link token")
       res.json(tokenResponse.data);
     } catch (error) {
       next(error);
@@ -113,6 +140,14 @@ app.post(
       // req.session.access_token = exchangeResponse.data.access_token;
       // res.json(exchangeResponse.data.access_token);
       localStorage.setItem(req.body.user_id, exchangeResponse.data.access_token);
+      const docRef = db.collection('access_tokens').doc(req.body.user_id);
+      // Atomically add a new region to the "regions" array field.
+      await docRef.set({
+        tokens: FieldValue.arrayUnion(exchangeResponse.data.access_token)
+      }, {
+        merge: true
+      });
+      console.log(exchangeResponse.data.access_token)
       res.json(true)
     } catch (error) {
       next(error);
@@ -120,28 +155,51 @@ app.post(
   }
 );
 
-// Fetches balance data using the Node client library for Plaid
-app.get(
-  "/api/cash",
+app.post(
+  "/api/add_access_token",
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      // Consider ::accountsGet()
-      const balanceResponse = await client.accountsBalanceGet({
-        access_token: getAccessToken(req.get("User-Id") ?? ""),
+      const docRef = db.collection('access_tokens').doc(req.body.user_id);
+      // Atomically add a new region to the "regions" array field.
+      // const unionRes = await docRef.update({
+      //   tokens: FieldValue.arrayUnion('greater_virginia')
+      // });
+      await docRef.set({
+        tokens: FieldValue.arrayUnion('token')
+      }, {
+        merge: true
       });
-      // console.log(balanceResponse.data.accounts);
+      res.json(true)
+    } catch (error) {
+      console.log("error")
+      next(error);
+    }
+  }
+);
+
+app.get(
+  "/api/accounts",
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
       res.json(
-        balanceResponse.data.accounts.
-        map(account=>{
-          return {
-            name: account.name,
-            official_name: account.official_name,
-            available_balance: account.balances.available,
-            current_balance: account.balances.current,
-            type: account.subtype
-          }
-        }),
-      );
+        (await Promise.all((await getAccessTokens(req))
+          .map(async token => {
+            return (await client.accountsGet({
+              access_token: token,
+            })).data.accounts.map(account => {
+              // console.log(account)
+              return {
+                id: account.account_id,
+                name: account.name,
+                official_name: account.official_name,
+                available_balance: account.balances.available,
+                current_balance: account.balances.current,
+                type: account.subtype
+              }
+            })
+          })
+        )).flat()
+      )
     } catch (error) {
       next(error);
     }
@@ -149,46 +207,69 @@ app.get(
 );
 
 app.get("/api/transactions",
-  async (req: Request, res: Response, next: NextFunction)=> {
-    try {
-      const transactionsResponse = await client.transactionsSync({
-        access_token: getAccessToken(req.get("User-Id") ?? ""),
-        count: 10
-      });
-      console.log(transactionsResponse.data.added);
-      res.json(
-        transactionsResponse.data.added.
-        map(tranasction=>{
-          return {
-            name: tranasction.merchant_name ?? tranasction.name,
-            time: tranasction.datetime,
-            amount: tranasction.amount
-          }
-        }),
-      );
-    } catch (error) {
-      next(error);
-    }
-  }
-);
-
-// Checks whether the user's account is connected, called
-// in index.html when redirected from oauth.html
-app.get(
-  "/api/is_account_connected",
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      return localStorage.getItem(req.get("User-Id") ?? "") != null
-        ? res.json({ status: true })
-        : res.json({ status: false });
+      const accountId = req.get("Account-Id") ?? ""
+      res.json(
+        (await Promise.all((await getAccessTokens(req))
+          .map(async token => {
+            return (await client.transactionsSync({
+              access_token: token,
+              count: 10
+            })).data.added
+              .filter((transaction: Transaction) => accountId.length == 0 || transaction.account_id === accountId)
+              .map(tranasction => {
+                // console.log(tranasction)
+                return {
+                  name: tranasction.merchant_name ?? tranasction.name,
+                  time: tranasction.date,
+                  amount: tranasction.amount
+                };
+              })
+          })
+        )).flat()
+      )
     } catch (error) {
       next(error);
     }
   }
 );
 
-function getAccessToken(userId: string) {
-  return localStorage.getItem(userId)?.replace(/['"]+/g, '') ?? ""
+app.get("/api/transaction_categories",
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const accountId: String = req.get("Account-Id") ?? "";
+      res.json(Array.from((await Promise.all((await getAccessTokens(req))
+        .map(async (token) => {
+          return (await client.transactionsSync({
+            access_token: token,
+            count: 10
+          })).data.added
+            .filter((transaction: Transaction) => accountId.length == 0 || transaction.account_id === accountId)
+            .map(tranasction => {
+              console.log(tranasction);
+              return {
+                category: tranasction.personal_finance_category?.primary,
+                amount: tranasction.amount,
+              };
+            });
+        }))
+      ).flat().reduce((accum, value) => accum.set(value.category, (accum.get(value.category) ?? 0) + value.amount), new Map()), ([category, amount]) => ({ category, amount })));
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+async function getAccessTokens(req: Request): Promise<string[]> {
+  const userId = req.get("User-Id") ?? ""
+  const doc = await db.collection('access_tokens').doc(userId).get();
+  if (!doc.exists) {
+    console.log('No such document!');
+  } else {
+    console.log('With tokens:', doc.data());
+  }
+  return (doc.data() ?? {})['tokens']
 }
 
 type PotentialPlaidError = Error & {
