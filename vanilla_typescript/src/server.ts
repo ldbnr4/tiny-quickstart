@@ -46,19 +46,7 @@ declare module "express-session" {
   }
 }
 
-// Your web app's Firebase configuration
-const firebaseConfig = {
-  apiKey: "AIzaSyAcbQotmNlwZY6B4vwBfMYi_qBt7jJpf30",
-  authDomain: "black-wall-street-p3vmel.firebaseapp.com",
-  projectId: "black-wall-street-p3vmel",
-  storageBucket: "black-wall-street-p3vmel.appspot.com",
-  messagingSenderId: "639291841708",
-  appId: "1:639291841708:web:933776a64c676dd2025309"
-};
-
 // Initialize Firebase
-// initializeApp(firebaseConfig);
-
 initializeApp({
   credential: applicationDefault()
 });
@@ -217,6 +205,7 @@ app.get("/api/transactions",
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const accountId = req.get("Account-Id") ?? ""
+      const category = req.get("Category") ?? ""
       res.json(
         (await Promise.all((await getAccessTokens(req))
           .map(async token => {
@@ -224,13 +213,14 @@ app.get("/api/transactions",
               access_token: token,
               count: 10
             })).data.added
-              .filter((transaction: Transaction) => accountId.length == 0 || transaction.account_id === accountId)
-              .map(tranasction => {
+              .filter((transaction: Transaction) => (accountId.length == 0 || transaction.account_id === accountId) && (category.length == 0 || transaction.personal_finance_category?.primary === category))
+              .map(transaction => {
                 // console.log(tranasction)
                 return {
-                  name: tranasction.merchant_name ?? tranasction.name,
-                  time: tranasction.date,
-                  amount: tranasction.amount
+                  account: transaction.account_id,
+                  name: transaction.merchant_name ?? transaction.name,
+                  time: transaction.date,
+                  amount: transaction.amount
                 };
               })
           })
