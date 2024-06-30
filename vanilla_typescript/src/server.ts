@@ -57,11 +57,11 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase
-initializeApp(firebaseConfig);
+// initializeApp(firebaseConfig);
 
-// initializeApp({
-//   credential: applicationDefault()
-// });
+initializeApp({
+  credential: applicationDefault()
+});
 
 const db = getFirestore();
 
@@ -181,12 +181,19 @@ app.get(
   "/api/accounts",
   async (req: Request, res: Response, next: NextFunction) => {
     try {
+      const accessTokens = await getAccessTokens(req);
+      if (!accessTokens || accessTokens.length == 0) {
+        console.log("No access tokens")
+        res.json([])
+        return
+      }
       res.json(
-        (await Promise.all((await getAccessTokens(req))
+        (await Promise.all(accessTokens
           .map(async token => {
-            return (await client.accountsGet({
+            const accountsResponse = await client.accountsGet({
               access_token: token,
-            })).data.accounts.map(account => {
+            });
+            return accountsResponse.data.accounts.map(account => {
               // console.log(account)
               return {
                 id: account.account_id,
