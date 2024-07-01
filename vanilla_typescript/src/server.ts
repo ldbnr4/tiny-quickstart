@@ -208,19 +208,32 @@ app.get("/api/transactions",
       const category = req.get("Category") ?? ""
       res.json(
         (await Promise.all((await getAccessTokens(req))
-          .map(async token => {
-            return (await client.transactionsSync({
-              access_token: token,
-              count: 10
-            })).data.added
+          .map(async (token) => {
+            var allData: Transaction[] = []
+            var cursor
+            var data
+            var counter = 0
+            do {
+              data = (await client.transactionsSync({
+                access_token: token,
+                count: 500,
+                cursor: cursor
+              })).data;
+              allData = [...allData, ...data.added, ...data.modified];
+              counter++
+              console.log("counter: " + counter)
+            } while (data.has_more || counter == 100);
+
+            return allData
               .filter((transaction: Transaction) => (accountId.length == 0 || transaction.account_id === accountId) && (category.length == 0 || transaction.personal_finance_category?.primary === category))
               .map(transaction => {
                 // console.log(tranasction)
                 return {
                   account: transaction.account_id,
                   name: transaction.merchant_name ?? transaction.name,
-                  time: transaction.date,
-                  amount: transaction.amount
+                  time: transaction.datetime ?? transaction.date,
+                  amount: transaction.amount,
+                  category: transaction.personal_finance_category?.primary
                 };
               })
           })
@@ -238,10 +251,11 @@ app.get("/api/transaction_categories",
       const accountId: String = req.get("Account-Id") ?? "";
       res.json(Array.from((await Promise.all((await getAccessTokens(req))
         .map(async (token) => {
-          return (await client.transactionsSync({
+          const data = (await client.transactionsSync({
             access_token: token,
-            count: 10
-          })).data.added
+            count: 500
+          })).data;
+          return [...data.added, ...data.modified]
             .filter((transaction: Transaction) => accountId.length == 0 || transaction.account_id === accountId)
             .map(tranasction => {
               console.log(tranasction);
