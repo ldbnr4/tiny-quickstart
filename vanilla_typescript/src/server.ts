@@ -29,6 +29,7 @@ import cors from "cors";
 import LocalStorage from "node-localstorage";
 import { initializeApp, applicationDefault, cert } from 'firebase-admin/app';
 import { getFirestore, Timestamp, FieldValue, Filter } from 'firebase-admin/firestore';
+import { addDoc } from 'firebase/firestore';
 import { credential } from "firebase-admin";
 // var serviceAccount = require("black-wall-street-p3vmel-firebase-adminsdk-ua71v-bc6cdd10bb.json");
 
@@ -52,6 +53,8 @@ initializeApp({
 });
 
 const db = getFirestore();
+const accessTokenCollection = db.collection('access_tokens');
+const testTransactionCollection = db.collection('test_transactions');
 
 app.use(
   // FOR DEMO PURPOSES ONLY
@@ -96,6 +99,7 @@ const client: PlaidApi = new PlaidApi(config);
 app.get(
   "/api/create_link_token",
   async (req: Request, res: Response, next: NextFunction) => {
+    console.log("create link token request")
     try {
       const linkConfigObject: LinkTokenCreateRequest = {
         user: { client_user_id: req.get("User-Id") ?? "default" },
@@ -109,6 +113,7 @@ app.get(
       console.log("created a link token")
       res.json(tokenResponse.data);
     } catch (error) {
+      console.log(error)
       next(error);
     }
   }
@@ -119,23 +124,23 @@ app.post(
   "/api/exchange_public_token",
   async (req: Request, res: Response, next: NextFunction) => {
     try {
+      console.log("exchange token request")
       const exchangeResponse = await client.itemPublicTokenExchange({
         public_token: req.body.public_token,
       });
 
       // FOR DEMO PURPOSES ONLY
-      // Store access_token in DB instead of session storage
-      // req.session.access_token = exchangeResponse.data.access_token;
-      // res.json(exchangeResponse.data.access_token);
-      localStorage.setItem(req.body.user_id, exchangeResponse.data.access_token);
-      const docRef = db.collection('access_tokens').doc(req.body.user_id);
+      // Store access_token in DB instead of local storage
+      const userId = req.get("User-Id") ?? "default"
+      // localStorage.setItem(userId, exchangeResponse.data.access_token);
+      const docRef = accessTokenCollection.doc(userId);
       // Atomically add a new region to the "regions" array field.
       await docRef.set({
         tokens: FieldValue.arrayUnion(exchangeResponse.data.access_token)
       }, {
         merge: true
       });
-      console.log(exchangeResponse.data.access_token)
+      console.log("created access token: " + exchangeResponse.data.access_token)
       res.json(true)
     } catch (error) {
       next(error);
@@ -147,7 +152,7 @@ app.post(
   "/api/add_access_token",
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const docRef = db.collection('access_tokens').doc(req.body.user_id);
+      const docRef = accessTokenCollection.doc(req.body.user_id);
       // Atomically add a new region to the "regions" array field.
       // const unionRes = await docRef.update({
       //   tokens: FieldValue.arrayUnion('greater_virginia')
@@ -183,13 +188,15 @@ app.get(
             });
             return accountsResponse.data.accounts.map(account => {
               // console.log(account)
+              // Add filter for checking and savings accounts
               return {
                 id: account.account_id,
                 name: account.name,
                 official_name: account.official_name,
                 available_balance: account.balances.available,
                 current_balance: account.balances.current,
-                type: account.subtype
+                type: account.type,
+                subtype: account.subtype
               }
             })
           })
@@ -206,39 +213,43 @@ app.get("/api/transactions",
     try {
       const accountId = req.get("Account-Id") ?? ""
       const category = req.get("Category") ?? ""
-      res.json(
-        (await Promise.all((await getAccessTokens(req))
-          .map(async (token) => {
-            var allData: Transaction[] = []
-            var cursor
-            var data
-            var counter = 0
-            do {
-              data = (await client.transactionsSync({
-                access_token: token,
-                count: 500,
-                cursor: cursor
-              })).data;
-              allData = [...allData, ...data.added, ...data.modified];
-              counter++
-              console.log("counter: " + counter)
-            } while (data.has_more || counter == 100);
-
-            return allData
-              .filter((transaction: Transaction) => (accountId.length == 0 || transaction.account_id === accountId) && (category.length == 0 || transaction.personal_finance_category?.primary === category))
-              .map(transaction => {
-                // console.log(tranasction)
-                return {
-                  account: transaction.account_id,
-                  name: transaction.merchant_name ?? transaction.name,
-                  time: transaction.datetime ?? transaction.date,
-                  amount: transaction.amount,
-                  category: transaction.personal_finance_category?.primary
-                };
-              })
-          })
-        )).flat()
-      )
+      const allAccessTokens = await getAccessTokens(req);
+      const allRawTransactions = (await Promise.all(allAccessTokens
+        .map(async (token) => {
+          var cursor;
+          var data;
+          var counter = 0;
+          var rawTransaactions: Transaction[] = [];
+          do {
+            data = (await client.transactionsSync({
+              access_token: token,
+              count: 500,
+              cursor: cursor
+            })).data;
+            rawTransaactions = [...rawTransaactions, ...data.added, ...data.modified];
+            cursor = data.next_cursor;
+            counter++;
+            console.log("counter: " + counter);
+          } while (data.has_more || counter == 10);
+          return rawTransaactions;
+        })
+      )).flat();
+      if (req.get("Save") === "test") {
+        await testTransactionCollection.doc().set({ transactions: allRawTransactions });
+      }
+      res.json(allRawTransactions.filter((transaction: Transaction) => (accountId.length == 0 || transaction.account_id === accountId) && (category.length == 0 || transaction.personal_finance_category?.primary === category))
+        .map(transaction => {
+          // console.log(tranasction)
+          return {
+            id: transaction.transaction_id,
+            accountId: transaction.account_id,
+            merchant: transaction.merchant_name ?? transaction.name,
+            date: transaction.authorized_date,
+            amount: transaction.amount,
+            logo_url: transaction.logo_url,
+            category: transaction.personal_finance_category?.primary
+          };
+        }));
     } catch (error) {
       next(error);
     }
@@ -274,7 +285,7 @@ app.get("/api/transaction_categories",
 
 async function getAccessTokens(req: Request): Promise<string[]> {
   const userId = req.get("User-Id") ?? ""
-  const doc = await db.collection('access_tokens').doc(userId).get();
+  const doc = await accessTokenCollection.doc(userId).get();
   if (!doc.exists) {
     console.log('No such document!');
   } else {

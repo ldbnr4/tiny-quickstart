@@ -34,6 +34,7 @@
     "firebase-admin": "^12.1.1",
     "node-localstorage": "^3.0.5",
     "path": "^0.12.7",
-    "plaid": "^21.0.0"
+    "plaid": "^21.0.0",
+    "tabula-js": "^1.0.1"
   }
 }
