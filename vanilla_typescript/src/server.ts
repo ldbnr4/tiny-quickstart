@@ -14,6 +14,7 @@ import express, {
 import bodyParser from "body-parser";
 import session from "express-session";
 import {
+  AccountBase,
   AccountSubtype,
   Configuration,
   CountryCode,
@@ -22,7 +23,9 @@ import {
   PlaidEnvironments,
   PlaidError,
   Products,
+  RemovedTransaction,
   Transaction,
+  TransactionsGetResponse,
 } from "plaid";
 import path from "path";
 import cors from "cors";
@@ -31,6 +34,7 @@ import { initializeApp, applicationDefault, cert } from 'firebase-admin/app';
 import { getFirestore, Timestamp, FieldValue, Filter } from 'firebase-admin/firestore';
 import { addDoc } from 'firebase/firestore';
 import { credential } from "firebase-admin";
+import moment from "moment";
 // var serviceAccount = require("black-wall-street-p3vmel-firebase-adminsdk-ua71v-bc6cdd10bb.json");
 
 var localStorage = new LocalStorage.LocalStorage('./scratch');
@@ -54,7 +58,8 @@ initializeApp({
 
 const db = getFirestore();
 const accessTokenCollection = db.collection('access_tokens');
-const testTransactionCollection = db.collection('test_transactions');
+const accountsCollection = db.collection('accounts');
+const transactionsCollection = db.collection('transactions');
 
 app.use(
   // FOR DEMO PURPOSES ONLY
@@ -105,7 +110,7 @@ app.get(
         user: { client_user_id: req.get("User-Id") ?? "default" },
         client_name: "Black Wall Street",
         language: "en",
-        products: [Products.Auth],
+        products: [Products.Transactions],
         country_codes: [CountryCode.Us],
         redirect_uri: process.env.PLAID_SANDBOX_REDIRECT_URI,
       };
@@ -180,27 +185,37 @@ app.get(
         res.json([])
         return
       }
-      res.json(
-        (await Promise.all(accessTokens
+      console.log("received accounts request");
+      const accountsRef = accountsCollection.doc(req.get("User-Id") ?? "default");
+      const userAccounts = await accountsRef.get()
+      var allAccounts: AccountBase[] = []
+      if (!userAccounts.exists) {
+        await Promise.all(accessTokens
           .map(async token => {
+            console.log("Calling plaid accounts API with token: " + token)
             const accountsResponse = await client.accountsGet({
               access_token: token,
             });
-            return accountsResponse.data.accounts.map(account => {
-              // console.log(account)
-              // Add filter for checking and savings accounts
-              return {
-                id: account.account_id,
-                name: account.name,
-                official_name: account.official_name,
-                available_balance: account.balances.available,
-                current_balance: account.balances.current,
-                type: account.type,
-                subtype: account.subtype
-              }
-            })
+            allAccounts = [...allAccounts, ...accountsResponse.data.accounts]
           })
-        )).flat()
+        )
+        await accountsRef.set({ accounts: allAccounts })
+      } else {
+        allAccounts = userAccounts.data()?.accounts as AccountBase[]
+      }
+      res.json(allAccounts.map(account => {
+        // console.log(account)
+        // Add filter for checking and savings accounts
+        return {
+          id: account.account_id,
+          name: account.name,
+          official_name: account.official_name,
+          available_balance: account.balances.available,
+          current_balance: account.balances.current,
+          type: account.type,
+          subtype: account.subtype
+        }
+      })
       )
     } catch (error) {
       next(error);
@@ -213,31 +228,33 @@ app.get("/api/transactions",
     try {
       const accountId = req.get("Account-Id") ?? ""
       const category = req.get("Category") ?? ""
-      const allAccessTokens = await getAccessTokens(req);
-      const allRawTransactions = (await Promise.all(allAccessTokens
-        .map(async (token) => {
-          var cursor;
-          var data;
-          var counter = 0;
-          var rawTransaactions: Transaction[] = [];
-          do {
-            data = (await client.transactionsSync({
-              access_token: token,
-              count: 500,
-              cursor: cursor
-            })).data;
-            rawTransaactions = [...rawTransaactions, ...data.added, ...data.modified];
-            cursor = data.next_cursor;
-            counter++;
-            console.log("counter: " + counter);
-          } while (data.has_more || counter == 10);
-          return rawTransaactions;
-        })
-      )).flat();
-      if (req.get("Save") === "test") {
-        await testTransactionCollection.doc().set({ transactions: allRawTransactions });
+      const start = req.query.startDate === undefined || req.query.startDate.length == 0 ? moment().subtract(30, 'days').format('YYYY-MM-DD') : String(req.query.startDate);
+      const end = req.query.endDate === undefined || req.query.endDate.length == 0 ? moment().format('YYYY-MM-DD') : String(req.query.endDate);
+      console.log("received transactions request starting " + start + " and ending " + end);
+      const userTransDocRef = transactionsCollection.doc(req.get("User-Id") ?? "default");
+      const userTransactions = (await userTransDocRef.get()).data()
+      var userTransEntry: UserTransactionEntry;
+      if (!userTransactions) {
+        userTransEntry = await getAllTransactoins(await getAccessTokens(req), start, end);
+        await userTransDocRef.set(userTransEntry)
+      } else {
+        userTransEntry = userTransactions as UserTransactionEntry
+        const updateStart = new Date(start).getTime() < new Date(userTransEntry.startDate).getTime();
+        const updateEnd = new Date(end).getTime() > new Date(userTransEntry.endDate).getTime();
+        if (updateStart || updateEnd) {
+          userTransEntry = await getAllTransactoins(await getAccessTokens(req), start, end);
+          if (updateStart) userTransEntry.startDate = start
+          if (updateEnd) userTransEntry.endDate = end
+          await userTransDocRef.set(userTransEntry)
+        }
       }
-      res.json(allRawTransactions.filter((transaction: Transaction) => (accountId.length == 0 || transaction.account_id === accountId) && (category.length == 0 || transaction.personal_finance_category?.primary === category))
+      res.json(userTransEntry.transactions
+        .filter((transaction: Transaction) =>
+          (accountId.length == 0 || transaction.account_id === accountId)
+          && (category.length == 0 || transaction.personal_finance_category?.primary === category)
+          && new Date(transaction.date).getTime() >= new Date(start).getTime()
+          && new Date(transaction.date).getTime() <= new Date(end).getTime()
+        )
         .map(transaction => {
           // console.log(tranasction)
           return {
@@ -249,7 +266,7 @@ app.get("/api/transactions",
             logo_url: transaction.logo_url,
             category: transaction.personal_finance_category?.primary
           };
-        }));
+        }))
     } catch (error) {
       next(error);
     }
@@ -283,6 +300,58 @@ app.get("/api/transaction_categories",
   }
 );
 
+async function getAllTransactoins(accessTokens: string[], start: string, end: string) {
+  // var newTrans: Transaction[] = [];
+  // var modTrans: Transaction[] = [];
+  // var removeTrans: RemovedTransaction[] = [];
+  var allTrans: Transaction[] = [];
+  await Promise.all(
+    accessTokens.map(async (token) => {
+      // for await (const token of allAccessTokens) {
+      // var cursor;
+      // var data: TransactionsGetResponse;
+      // var counter = 0;
+      console.log("calling plaid transacrtions API with token: " + token);
+      // do {
+      const data = (await client.transactionsGet({
+        access_token: token,
+        start_date: start,
+        end_date: end,
+        // options: {
+        //   count: 500,
+        //   offset: 0
+        // }
+        // count: 500,
+        // cursor: cursor
+      })).data.transactions;
+      allTrans = [...allTrans, ...data];
+      // newTrans = [...newTrans, ...data.added];
+      // modTrans = [...modTrans, ...data.modified];
+      // removeTrans = [...removeTrans, ...data.removed]
+      // cursor = data.next_cursor;
+      // counter++;
+      // console.log("counter: " + counter);
+      // console.log("has more: " + data.has_more);
+      // console.log("cursor: " + data.next_cursor)
+      // } while (data.has_more && counter <= 10);
+      // }
+    })
+  );
+  // for (const newTran of [...newTrans, ...modTrans]) {
+  //   await testTransactionCollection.doc(newTran.transaction_id).set({ newTran });
+  // }
+  // for (const removeTran of removeTrans.map(x => x.transaction_id)) {
+  //   if (removeTran != null) {
+  //     await testTransactionCollection.doc(removeTran).delete();
+  //   }
+  // }
+  return {
+    transactions: allTrans,
+    startDate: start,
+    endDate: end
+  } as UserTransactionEntry;
+}
+
 async function getAccessTokens(req: Request): Promise<string[]> {
   const userId = req.get("User-Id") ?? ""
   const doc = await accessTokenCollection.doc(userId).get();
@@ -293,6 +362,12 @@ async function getAccessTokens(req: Request): Promise<string[]> {
   }
   return (doc.data() ?? {})['tokens']
 }
+
+interface UserTransactionEntry {
+  transactions: Transaction[];
+  startDate: string;
+  endDate: string;
+};
 
 type PotentialPlaidError = Error & {
   response?: {
