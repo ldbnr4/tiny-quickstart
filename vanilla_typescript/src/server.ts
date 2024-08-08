@@ -261,7 +261,7 @@ app.get("/api/transactions",
             id: transaction.transaction_id,
             accountId: transaction.account_id,
             merchant: transaction.merchant_name ?? transaction.name,
-            date: transaction.authorized_date,
+            date: transaction.date,
             amount: transaction.amount,
             logo_url: transaction.logo_url,
             category: transaction.personal_finance_category?.primary
