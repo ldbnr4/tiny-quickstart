@@ -235,6 +235,7 @@ app.get("/api/transactions",
       const userTransactions = (await userTransDocRef.get()).data()
       var userTransEntry: UserTransactionEntry;
       if (!userTransactions) {
+        console.log("No user transactions on record");
         userTransEntry = await getAllTransactoins(await getAccessTokens(req), start, end);
         await userTransDocRef.set(userTransEntry)
       } else {
@@ -242,6 +243,7 @@ app.get("/api/transactions",
         const updateStart = new Date(start).getTime() < new Date(userTransEntry.startDate).getTime();
         const updateEnd = new Date(end).getTime() > new Date(userTransEntry.endDate).getTime();
         if (updateStart || updateEnd) {
+          console.log("Update start: " + updateStart + ", update end: " + updateEnd);
           userTransEntry = await getAllTransactoins(await getAccessTokens(req), start, end);
           if (updateStart) userTransEntry.startDate = start
           if (updateEnd) userTransEntry.endDate = end
@@ -311,7 +313,7 @@ async function getAllTransactoins(accessTokens: string[], start: string, end: st
       // var cursor;
       // var data: TransactionsGetResponse;
       // var counter = 0;
-      console.log("calling plaid transacrtions API with token: " + token);
+      console.log("calling plaid transactions API with token: " + token);
       // do {
       const data = (await client.transactionsGet({
         access_token: token,
