@@ -262,11 +262,16 @@ app.get("/api/transactions",
           return {
             id: transaction.transaction_id,
             accountId: transaction.account_id,
-            merchant: transaction.merchant_name ?? transaction.name,
             date: transaction.date,
             amount: transaction.amount,
+            name: transaction.name,
+            category: transaction.personal_finance_category?.primary,
+            detailed_category: transaction.personal_finance_category?.detailed,
+            category_logo_url: transaction.personal_finance_category_icon_url,
+            cp_name: transaction.counterparties?.at(0)?.name,
+            cp_logo_url: transaction.counterparties?.at(0)?.logo_url,
+            merchant: transaction.merchant_name,
             logo_url: transaction.logo_url,
-            category: transaction.personal_finance_category?.primary
           };
         }))
     } catch (error) {
