@@ -9,4 +9,7 @@ module.exports = {
   collectCoverage: true,
   clearMocks: true,
   coverageDirectory: "coverage",
+  collectCoverageFrom: [
+        "src/server.ts"
+    ],
 };

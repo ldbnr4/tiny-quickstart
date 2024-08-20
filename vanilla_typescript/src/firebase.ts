@@ -20,6 +20,7 @@ const accountsCollection = db.collection('accounts');
 const transactionsCollection = db.collection('transactions');
 
 export async function storeAccessToken(accessToken: String, userId: string) {
+    console.log("storing access token in firebase");
     const docRef = accessTokenCollection.doc(userId);
     await docRef.set({
         tokens: FieldValue.arrayUnion(accessToken)
@@ -53,7 +54,7 @@ export async function storeTransactions(start: string, end: string, userId: stri
     var userTransEntry: UserTransactionEntry;
     if (!userTransactions) {
         console.log("No user transactions on record");
-        userTransEntry = await getAllTransactoins(await getAccessTokens(userId), start, end);
+        userTransEntry = await _getAllTransactoins(await getAccessTokens(userId), start, end);
         await userTransDocRef.set(userTransEntry);
     } else {
         userTransEntry = userTransactions as UserTransactionEntry;
@@ -61,7 +62,7 @@ export async function storeTransactions(start: string, end: string, userId: stri
         const updateEnd = new Date(end).getTime() > new Date(userTransEntry.endDate).getTime();
         if (updateStart || updateEnd) {
             console.log("Update start: " + updateStart + ", update end: " + updateEnd);
-            userTransEntry = await getAllTransactoins(await getAccessTokens(userId), start, end);
+            userTransEntry = await _getAllTransactoins(await getAccessTokens(userId), start, end);
             if (updateStart) userTransEntry.startDate = start;
             if (updateEnd) userTransEntry.endDate = end;
             await userTransDocRef.set(userTransEntry);
@@ -80,7 +81,7 @@ export async function getAccessTokens(userId: string): Promise<string[]> {
     return (doc.data() ?? {})['tokens']
 }
 
-async function getAllTransactoins(accessTokens: string[], start: string, end: string) {
+async function _getAllTransactoins(accessTokens: string[], start: string, end: string) {
     // var newTrans: Transaction[] = [];
     // var modTrans: Transaction[] = [];
     // var removeTrans: RemovedTransaction[] = [];
