@@ -8,7 +8,7 @@
     "dev": "nodemon src/server.ts",
     "build": "tsc && npm run copy-assets",
     "copy-assets": "copyfiles -u 1 src/*.html dist/",
-    "test": "jest --coverage --detectOpenHandles"
+    "test": "jest --coverage --detectOpenHandles --config ./jest.config.js"
   },
   "author": "zotime",
   "license": "MIT",
