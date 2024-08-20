@@ -6,3 +6,5 @@ yarn.lock
 vanilla_typescript/dist/*
 vanilla_typescript/coverage/*
 jest.config.js
+
+.DS_Store
