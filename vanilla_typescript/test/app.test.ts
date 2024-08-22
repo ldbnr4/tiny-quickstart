@@ -85,7 +85,7 @@ describe("Test server.ts", () => {
                     {
                         transaction_id: "test_id",
                         account_id: "test_accnt_id",
-                        date: moment().format('YYYY-MM-DD'),
+                        date: '2024-08-20',
                         name: "name",
                         amount: 100,
                         personal_finance_category: {
@@ -100,19 +100,22 @@ describe("Test server.ts", () => {
             } as UserTransactionEntry
         )
 
-        await request(app).get("/api/transactions").expect(200,
-            [{
-                id: 'test_id',
-                accountId: 'test_accnt_id',
-                date: '2024-08-20',
-                amount: 100,
-                name: 'name',
-                category: 'test_primary',
-                detailed_category: 'test_detailed',
-                category_logo_url: 'test_pf_url',
-                merchant: 'test_merchant',
-                logo_url: 'test_url'
-            }]);
+        await request(app).get("/api/transactions")
+            .query({ "startDate": "2024-08-20", "endDate": "2024-08-20" })
+            .expect(
+                200,
+                [{
+                    id: 'test_id',
+                    accountId: 'test_accnt_id',
+                    date: '2024-08-20',
+                    amount: 100,
+                    name: 'name',
+                    category: 'test_primary',
+                    detailed_category: 'test_detailed',
+                    category_logo_url: 'test_pf_url',
+                    merchant: 'test_merchant',
+                    logo_url: 'test_url'
+                }]);
         server.close()
 
         expect(mockStoreTransactions.mock.calls).toHaveLength(1)
