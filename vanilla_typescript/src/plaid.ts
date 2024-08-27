@@ -1,9 +1,12 @@
 import { Configuration, CountryCode, LinkTokenCreateRequest, PlaidApi, PlaidEnvironments, Products, TransactionsGetRequest } from "plaid";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 // Configuration for the Plaid client
 const environmentName = process.env.PLAID_ENV ?? "sandbox";
 
-const config = new Configuration({
+export const config = new Configuration({
     basePath: PlaidEnvironments[environmentName],
     baseOptions: {
         headers: {
