@@ -49,24 +49,23 @@ export async function getAllAccounts(accessTokens: string[], userId: string) {
 }
 
 export async function storeTransactions(start: string, end: string, userId: string) {
-    const userTransDocRef = transactionsCollection.doc();
+    const userTransDocRef = transactionsCollection.doc(userId);
     const userTransactions = (await userTransDocRef.get()).data();
-    var userTransEntry: UserTransactionEntry;
+    var userTransEntry = await _getAllTransactoins(await getAccessTokens(userId), start, end);
     if (!userTransactions) {
         console.log("No user transactions on record");
-        userTransEntry = await _getAllTransactoins(await getAccessTokens(userId), start, end);
-        await userTransDocRef.set(userTransEntry);
     } else {
         userTransEntry = userTransactions as UserTransactionEntry;
         const updateStart = new Date(start).getTime() < new Date(userTransEntry.startDate).getTime();
         const updateEnd = new Date(end).getTime() > new Date(userTransEntry.endDate).getTime();
         if (updateStart || updateEnd) {
             console.log("Update start: " + updateStart + ", update end: " + updateEnd);
-            userTransEntry = await _getAllTransactoins(await getAccessTokens(userId), start, end);
             if (updateStart) userTransEntry.startDate = start;
             if (updateEnd) userTransEntry.endDate = end;
-            await userTransDocRef.set(userTransEntry);
         }
+    }
+    if (userTransEntry) {
+        await userTransDocRef.set(userTransEntry);
     }
     return userTransEntry;
 }
@@ -74,17 +73,21 @@ export async function storeTransactions(start: string, end: string, userId: stri
 export async function getAccessTokens(userId: string): Promise<string[]> {
     const doc = await accessTokenCollection.doc(userId).get();
     if (!doc.exists) {
-        console.log('No such document!');
+        console.log('No access token document!');
+        return []
     } else {
         console.log('With tokens:', doc.data());
     }
     return (doc.data() ?? {})['tokens']
 }
 
-async function _getAllTransactoins(accessTokens: string[], start: string, end: string) {
+async function _getAllTransactoins(accessTokens: string[], start: string, end: string): Promise<UserTransactionEntry | undefined> {
     // var newTrans: Transaction[] = [];
     // var modTrans: Transaction[] = [];
     // var removeTrans: RemovedTransaction[] = [];
+    if (accessTokens.length == 0) {
+        return undefined
+    }
     var allTrans: Transaction[] = [];
     await Promise.all(
         accessTokens.map(async (token) => {

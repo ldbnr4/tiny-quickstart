@@ -122,31 +122,36 @@ app.get("/api/transactions",
       const start = req.query.startDate === undefined || req.query.startDate.length == 0 ? moment().subtract(30, 'days').format('YYYY-MM-DD') : String(req.query.startDate);
       const end = req.query.endDate === undefined || req.query.endDate.length == 0 ? moment().format('YYYY-MM-DD') : String(req.query.endDate);
       console.log("received transactions request starting " + start + " and ending " + end);
-      var userTransEntry: UserTransactionEntry = await storeTransactions(start, end, getUserId(req));
-      res.json(userTransEntry.transactions
-        .filter((transaction: Transaction) =>
-          (accountId.length == 0 || transaction.account_id === accountId)
-          && (category.length == 0 || transaction.personal_finance_category?.primary === category)
-          && new Date(transaction.date).getTime() >= new Date(start).getTime()
-          && new Date(transaction.date).getTime() <= new Date(end).getTime()
-        )
-        .map(transaction => {
-          // console.log(tranasction)
-          return {
-            id: transaction.transaction_id,
-            accountId: transaction.account_id,
-            date: transaction.date,
-            amount: transaction.amount,
-            name: transaction.name,
-            category: transaction.personal_finance_category?.primary,
-            detailed_category: transaction.personal_finance_category?.detailed,
-            category_logo_url: transaction.personal_finance_category_icon_url,
-            cp_name: transaction.counterparties?.at(0)?.name,
-            cp_logo_url: transaction.counterparties?.at(0)?.logo_url,
-            merchant: transaction.merchant_name,
-            logo_url: transaction.logo_url,
-          };
-        }))
+      var userTransEntry = await storeTransactions(start, end, getUserId(req));
+      if (!userTransEntry) {
+        res.json([])
+      }
+      else {
+        res.json(userTransEntry.transactions
+          .filter((transaction: Transaction) =>
+            (accountId.length == 0 || transaction.account_id === accountId)
+            && (category.length == 0 || transaction.personal_finance_category?.primary === category)
+            && new Date(transaction.date).getTime() >= new Date(start).getTime()
+            && new Date(transaction.date).getTime() <= new Date(end).getTime()
+          )
+          .map(transaction => {
+            // console.log(tranasction)
+            return {
+              id: transaction.transaction_id,
+              accountId: transaction.account_id,
+              date: transaction.date,
+              amount: transaction.amount,
+              name: transaction.name,
+              category: transaction.personal_finance_category?.primary,
+              detailed_category: transaction.personal_finance_category?.detailed,
+              category_logo_url: transaction.personal_finance_category_icon_url,
+              cp_name: transaction.counterparties?.at(0)?.name,
+              cp_logo_url: transaction.counterparties?.at(0)?.logo_url,
+              merchant: transaction.merchant_name,
+              logo_url: transaction.logo_url,
+            };
+          }))
+      }
     } catch (error) {
       next(error);
     }
