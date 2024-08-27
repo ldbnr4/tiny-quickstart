@@ -6,7 +6,7 @@ dotenv.config();
 // Configuration for the Plaid client
 const environmentName = process.env.PLAID_ENV ?? "sandbox";
 
-export const config = new Configuration({
+const config = new Configuration({
     basePath: PlaidEnvironments[environmentName],
     baseOptions: {
         headers: {
