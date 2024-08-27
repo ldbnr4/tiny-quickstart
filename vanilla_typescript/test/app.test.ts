@@ -4,7 +4,6 @@ import { exchangeToken, getPlaidLinkToken } from '../src/plaid'
 import { AxiosResponse } from 'axios';
 import { AccountSubtype, AccountType, ItemPublicTokenExchangeResponse, LinkTokenCreateResponse } from 'plaid';
 import { getAccessTokens, getAllAccounts, storeAccessToken, storeTransactions, UserTransactionEntry } from '../src/firebase';
-import moment from 'moment';
 
 jest.mock("../src/plaid")
 jest.mock("../src/firebase")
