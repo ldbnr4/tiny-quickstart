@@ -1,13 +1,8 @@
 import { initializeApp, applicationDefault, cert } from 'firebase-admin/app';
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import { AccountBase, Transaction } from "plaid";
-import { getAccounts, getTransactions } from "./plaid";
-
-export interface UserTransactionEntry {
-    transactions: Transaction[];
-    startDate: string;
-    endDate: string;
-};
+import { getAccounts, getAllTransactions } from "./plaid";
+import { UserTransactionEntry } from './transaction';
 
 // Initialize Firebase
 initializeApp({
@@ -48,26 +43,14 @@ export async function getAllAccounts(accessTokens: string[], userId: string) {
     return allAccounts;
 }
 
-export async function storeTransactions(start: string, end: string, userId: string) {
-    const userTransDocRef = transactionsCollection.doc(userId);
-    const userTransactions = (await userTransDocRef.get()).data();
-    var userTransEntry = await _getAllTransactoins(await getAccessTokens(userId), start, end);
-    if (!userTransactions) {
-        console.log("No user transactions on record");
-    } else {
-        userTransEntry = userTransactions as UserTransactionEntry;
-        const updateStart = new Date(start).getTime() < new Date(userTransEntry.startDate).getTime();
-        const updateEnd = new Date(end).getTime() > new Date(userTransEntry.endDate).getTime();
-        if (updateStart || updateEnd) {
-            console.log("Update start: " + updateStart + ", update end: " + updateEnd);
-            if (updateStart) userTransEntry.startDate = start;
-            if (updateEnd) userTransEntry.endDate = end;
-        }
-    }
-    if (userTransEntry) {
-        await userTransDocRef.set(userTransEntry);
-    }
-    return userTransEntry;
+export async function getTransactions(userId: string): Promise<FirebaseFirestore.DocumentData | undefined> {
+    console.log("getting transactions for: " + userId)
+    return (await transactionsCollection.doc(userId).get()).data();
+}
+
+export async function storeTransactions(userId: string, userTransEntry: UserTransactionEntry) {
+    console.log("storing transactions for: " + userId)
+    await transactionsCollection.doc(userId).set(userTransEntry);
 }
 
 export async function getAccessTokens(userId: string): Promise<string[]> {
@@ -76,62 +59,7 @@ export async function getAccessTokens(userId: string): Promise<string[]> {
         console.log('No access token document!');
         return []
     } else {
-        console.log('With tokens:', doc.data());
+        console.log('Got access tokens:', doc.data());
     }
     return (doc.data() ?? {})['tokens']
-}
-
-async function _getAllTransactoins(accessTokens: string[], start: string, end: string): Promise<UserTransactionEntry | undefined> {
-    // var newTrans: Transaction[] = [];
-    // var modTrans: Transaction[] = [];
-    // var removeTrans: RemovedTransaction[] = [];
-    if (accessTokens.length == 0) {
-        return undefined
-    }
-    var allTrans: Transaction[] = [];
-    await Promise.all(
-        accessTokens.map(async (token) => {
-            // for await (const token of allAccessTokens) {
-            // var cursor;
-            // var data: TransactionsGetResponse;
-            // var counter = 0;
-            console.log("calling plaid transactions API with token: " + token);
-            // do {
-            const data = (await getTransactions({
-                access_token: token,
-                start_date: start,
-                end_date: end,
-                // options: {
-                //   count: 500,
-                //   offset: 0
-                // }
-                // count: 500,
-                // cursor: cursor
-            })).data.transactions;
-            allTrans = [...allTrans, ...data];
-            // newTrans = [...newTrans, ...data.added];
-            // modTrans = [...modTrans, ...data.modified];
-            // removeTrans = [...removeTrans, ...data.removed]
-            // cursor = data.next_cursor;
-            // counter++;
-            // console.log("counter: " + counter);
-            // console.log("has more: " + data.has_more);
-            // console.log("cursor: " + data.next_cursor)
-            // } while (data.has_more && counter <= 10);
-            // }
-        })
-    );
-    // for (const newTran of [...newTrans, ...modTrans]) {
-    //   await testTransactionCollection.doc(newTran.transaction_id).set({ newTran });
-    // }
-    // for (const removeTran of removeTrans.map(x => x.transaction_id)) {
-    //   if (removeTran != null) {
-    //     await testTransactionCollection.doc(removeTran).delete();
-    //   }
-    // }
-    return {
-        transactions: allTrans,
-        startDate: start,
-        endDate: end
-    } as UserTransactionEntry;
 }

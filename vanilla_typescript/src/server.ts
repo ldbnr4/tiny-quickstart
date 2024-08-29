@@ -18,8 +18,9 @@ import {
 } from "plaid";
 import cors from "cors";
 import moment from "moment";
-import { exchangeToken, getPlaidLinkToken } from "./plaid";
-import { getAccessTokens, getAllAccounts, storeAccessToken, storeTransactions, UserTransactionEntry } from "./firebase";
+import { exchangeToken, getAllTransactions, getPlaidLinkToken } from "./plaid";
+import { getAccessTokens, getAllAccounts, getTransactions, storeAccessToken, storeTransactions } from "./firebase";
+import { UserTransactionEntry } from "./transaction";
 
 dotenv.config();
 export const app: Application = express();
@@ -116,14 +117,16 @@ app.get(
 
 app.get("/api/transactions",
   async (req: Request, res: Response, next: NextFunction) => {
+    console.log("received transactions request");
     try {
       const accountId = req.get("Account-Id") ?? ""
       const category = req.get("Category") ?? ""
       const start = req.query.startDate === undefined || req.query.startDate.length == 0 ? moment().subtract(30, 'days').format('YYYY-MM-DD') : String(req.query.startDate);
       const end = req.query.endDate === undefined || req.query.endDate.length == 0 ? moment().format('YYYY-MM-DD') : String(req.query.endDate);
-      console.log("received transactions request starting " + start + " and ending " + end);
-      var userTransEntry = await storeTransactions(start, end, getUserId(req));
+      const userId = getUserId(req);
+      const userTransEntry = await _getUserTransactions(userId, start, end);
       if (!userTransEntry) {
+        console.log("Failed to get user transactions")
         res.json([])
       }
       else {
@@ -210,6 +213,38 @@ const errorHandler: ErrorRequestHandler = (
 };
 
 app.use(errorHandler);
+
+async function _getUserTransactions(userId: string, start: string, end: string) {
+  var userTransEntry: UserTransactionEntry | undefined;
+  const userTransactions = (await getTransactions(userId));
+  if (userTransactions) {
+    console.log("User has transactions on record");
+    const updateStart = new Date(start).getTime() < new Date(userTransactions.startDate).getTime();
+    const updateEnd = new Date(end).getTime() > new Date(userTransactions.endDate).getTime();
+    if (updateStart || updateEnd) {
+      console.log("Update start: " + updateStart + ", update end: " + updateEnd);
+      if (updateStart) userTransactions.startDate = start;
+      if (updateEnd) userTransactions.endDate = end;
+      userTransEntry = await getAllTransactions(await getAccessTokens(userId), start, end);
+      if (userTransEntry) {
+        await storeTransactions(userId, userTransEntry);
+      } else {
+        console.log("Did not store transactions")
+      }
+    } else {
+      userTransEntry = userTransactions as UserTransactionEntry;
+    }
+  } else {
+    console.log("No user transactions on record");
+    userTransEntry = await getAllTransactions(await getAccessTokens(userId), start, end);
+    if (userTransEntry) {
+      await storeTransactions(userId, userTransEntry);
+    } else {
+      console.log("Did not store transactions")
+    }
+  }
+  return userTransEntry;
+}
 
 function getUserId(req: Request): string {
   return req.get("User-Id") ?? "default";

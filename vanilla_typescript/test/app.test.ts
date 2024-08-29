@@ -1,9 +1,10 @@
 import request from 'supertest';
 import { app, server } from '../src/server';
-import { exchangeToken, getPlaidLinkToken } from '../src/plaid'
+import { exchangeToken, getAllTransactions, getPlaidLinkToken } from '../src/plaid'
 import { AxiosResponse } from 'axios';
 import { AccountSubtype, AccountType, ItemPublicTokenExchangeResponse, LinkTokenCreateResponse } from 'plaid';
-import { getAccessTokens, getAllAccounts, storeAccessToken, storeTransactions, UserTransactionEntry } from '../src/firebase';
+import { getAccessTokens, getAllAccounts, storeAccessToken, storeTransactions } from '../src/firebase';
+import { UserTransactionEntry } from '../src/transaction';
 
 jest.mock("../src/plaid")
 jest.mock("../src/firebase")
@@ -77,8 +78,9 @@ describe("Test server.ts", () => {
     });
 
     test("Get transactions", async () => {
-        const mockStoreTransactions = jest.mocked(storeTransactions)
-        mockStoreTransactions.mockResolvedValue(
+        const mockedStore = jest.mocked(storeTransactions)
+        const mockGetTransactions = jest.mocked(getAllTransactions)
+        mockGetTransactions.mockResolvedValue(
             {
                 transactions: [
                     {
@@ -117,6 +119,7 @@ describe("Test server.ts", () => {
                 }]);
         server.close()
 
-        expect(mockStoreTransactions.mock.calls).toHaveLength(1)
+        expect(mockGetTransactions.mock.calls).toHaveLength(1)
+        expect(mockedStore.mock.calls).toHaveLength(1)
     });
 });
