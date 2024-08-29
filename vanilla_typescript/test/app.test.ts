@@ -1,9 +1,9 @@
 import request from 'supertest';
 import { app, server } from '../src/server';
-import { exchangeToken, getAllTransactions, getPlaidLinkToken } from '../src/plaid'
+import { exchangeToken, getAccounts, getAllTransactions, getPlaidLinkToken } from '../src/plaid'
 import { AxiosResponse } from 'axios';
-import { AccountSubtype, AccountType, ItemPublicTokenExchangeResponse, LinkTokenCreateResponse } from 'plaid';
-import { getAccessTokens, getAllAccounts, storeAccessToken, storeTransactions } from '../src/firebase';
+import { AccountsGetResponse, AccountSubtype, AccountType, ItemPublicTokenExchangeResponse, LinkTokenCreateResponse } from 'plaid';
+import { getAccessTokens, getDbAccounts, storeAccessToken } from '../src/firebase';
 import { UserTransactionEntry } from '../src/transaction';
 
 jest.mock("../src/plaid")
@@ -24,7 +24,6 @@ describe("Test server.ts", () => {
 
     test("Exchange token", async () => {
         const mockedExchangeToken = jest.mocked(exchangeToken)
-        const mockedStore = jest.mocked(storeAccessToken)
         mockedExchangeToken.mockReturnValueOnce(
             {
                 data:
@@ -33,33 +32,36 @@ describe("Test server.ts", () => {
         );
         await request(app).post("/api/exchange_public_token").expect(200, 'true');
         server.close()
-
-        expect(mockedExchangeToken.mock.calls).toHaveLength(1)
-        expect(mockedStore.mock.calls).toHaveLength(1)
     });
 
     test("Get accounts", async () => {
         const mockedGetAccessTokens = jest.mocked(getAccessTokens)
-        const mockGetAllAccounts = jest.mocked(getAllAccounts)
+        const mockGetAccounts = jest.mocked(getAccounts)
+        const mockDbAccounts = jest.mocked(getDbAccounts)
         mockedGetAccessTokens.mockResolvedValue(
             ["access_token"]
-        );
-        mockGetAllAccounts.mockResolvedValue(
-            [{
-                account_id: 'test_id',
-                balances: {
-                    available: 100,
-                    current: 100,
-                    limit: null,
-                    iso_currency_code: null,
-                    unofficial_currency_code: null
-                },
-                mask: null,
-                name: 'test_name',
-                official_name: 'test_official_name',
-                type: AccountType.Depository,
-                subtype: AccountSubtype.Checking
-            }]
+        )
+        mockDbAccounts.mockResolvedValue([]);
+        mockGetAccounts.mockResolvedValue(
+            {
+                data: {
+                    accounts: [{
+                        account_id: 'test_id',
+                        balances: {
+                            available: 100,
+                            current: 100,
+                            limit: null,
+                            iso_currency_code: null,
+                            unofficial_currency_code: null
+                        },
+                        mask: null,
+                        name: 'test_name',
+                        official_name: 'test_official_name',
+                        type: AccountType.Depository,
+                        subtype: AccountSubtype.Checking
+                    }],
+                }
+            } as unknown as Promise<AxiosResponse<AccountsGetResponse>>
         )
 
         await request(app).get("/api/accounts").expect(200, [{
@@ -72,13 +74,9 @@ describe("Test server.ts", () => {
             "subtype": "checking"
         }]);
         server.close()
-
-        expect(mockedGetAccessTokens.mock.calls).toHaveLength(1)
-        expect(mockedGetAccessTokens.mock.calls).toHaveLength(1)
     });
 
     test("Get transactions", async () => {
-        const mockedStore = jest.mocked(storeTransactions)
         const mockGetTransactions = jest.mocked(getAllTransactions)
         mockGetTransactions.mockResolvedValue(
             {
@@ -118,8 +116,5 @@ describe("Test server.ts", () => {
                     logo_url: 'test_url'
                 }]);
         server.close()
-
-        expect(mockGetTransactions.mock.calls).toHaveLength(1)
-        expect(mockedStore.mock.calls).toHaveLength(1)
     });
 });

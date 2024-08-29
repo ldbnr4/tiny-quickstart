@@ -12,14 +12,13 @@ import express, {
 } from "express";
 import bodyParser from "body-parser";
 import {
-  AccountBase,
   PlaidError,
   Transaction,
 } from "plaid";
 import cors from "cors";
 import moment from "moment";
-import { exchangeToken, getAllTransactions, getPlaidLinkToken } from "./plaid";
-import { getAccessTokens, getAllAccounts, getTransactions, storeAccessToken, storeTransactions } from "./firebase";
+import { exchangeToken, getAccounts, getAllTransactions, getPlaidLinkToken } from "./plaid";
+import { getAccessTokens, getDbAccounts, getTransactions, storeAccessToken, storeAccounts, storeTransactions } from "./firebase";
 import { UserTransactionEntry } from "./transaction";
 
 dotenv.config();
@@ -86,15 +85,27 @@ app.post(
 app.get(
   "/api/accounts",
   async (req: Request, res: Response, next: NextFunction) => {
+    console.log("received accounts request");
     try {
-      const accessTokens = await getAccessTokens(getUserId(req));
+      const userId = getUserId(req);
+      const accessTokens = await getAccessTokens(userId);
       if (!accessTokens || accessTokens.length == 0) {
         console.log("No access tokens")
         res.json([])
         return
       }
-      console.log("received accounts request");
-      var allAccounts: AccountBase[] = await getAllAccounts(accessTokens, getUserId(req));
+      var allAccounts = await getDbAccounts(userId);
+      if (allAccounts.length == 0) {
+        console.log("User did not have any accounts on record")
+        await Promise.all(accessTokens
+          .map(async (token) => {
+            console.log("Calling plaid accounts API with token: " + token)
+            const accountsResponse = await getAccounts(token)
+            allAccounts = [...allAccounts, ...accountsResponse.data.accounts]
+          })
+        )
+        await storeAccounts(userId, allAccounts)
+      }
       res.json(allAccounts.map(account => {
         // console.log(account)
         // Add filter for checking and savings accounts
