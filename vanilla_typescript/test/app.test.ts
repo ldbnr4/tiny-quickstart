@@ -3,7 +3,7 @@ import { app, server } from '../src/server';
 import { exchangeToken, getAccounts, getAllTransactions, getPlaidLinkToken } from '../src/plaid'
 import { AxiosResponse } from 'axios';
 import { AccountBase, AccountsGetResponse, AccountSubtype, AccountType, ItemPublicTokenExchangeResponse, LinkTokenCreateResponse } from 'plaid';
-import { getAccessTokens, getDbAccounts, getTransactions, storeAccessToken } from '../src/firebase';
+import { getDbAccessTokens, getDbAccounts, getDbTransactions } from '../src/firebase';
 import { UserTransactionEntry } from '../src/transaction';
 
 jest.mock("../src/plaid")
@@ -84,7 +84,7 @@ describe("Test server.ts", () => {
 
     test("Get transactions, update", async () => {
         setupMockAccessTokens()
-        jest.mocked(getTransactions).mockReturnValueOnce(
+        jest.mocked(getDbTransactions).mockReturnValueOnce(
             {
                 startDate: "2024-08-20",
                 endDate: "2024-08-20",
@@ -105,7 +105,7 @@ describe("Test server.ts", () => {
 
     test("Get transactions, empty", async () => {
         setupMockAccessTokens()
-        jest.mocked(getTransactions).mockReturnValueOnce(
+        jest.mocked(getDbTransactions).mockReturnValueOnce(
             {
                 startDate: "2024-08-20",
                 endDate: "2024-08-20",
@@ -121,7 +121,7 @@ describe("Test server.ts", () => {
 });
 
 function setupMockAccessTokens() {
-    jest.mocked(getAccessTokens).mockReturnValueOnce(
+    jest.mocked(getDbAccessTokens).mockReturnValueOnce(
         ["access_token"] as unknown as Promise<string[]>
     )
 }

@@ -13,7 +13,7 @@ const accessTokenCollection = db.collection('access_tokens');
 const accountsCollection = db.collection('accounts');
 const transactionsCollection = db.collection('transactions');
 
-export async function getAccessTokens(userId: string): Promise<string[]> {
+export async function getDbAccessTokens(userId: string): Promise<string[]> {
     const doc = await accessTokenCollection.doc(userId).get()
     if (!doc.exists) {
         console.log('No access token document!')
@@ -48,7 +48,7 @@ export async function storeAccounts(userId: string, accountBaseList: AccountBase
     await accountsCollection.doc(userId).set({ accounts: accountBaseList })
 }
 
-export async function getTransactions(userId: string): Promise<FirebaseFirestore.DocumentData | undefined> {
+export async function getDbTransactions(userId: string): Promise<FirebaseFirestore.DocumentData | undefined> {
     console.log("getting transactions for: " + userId)
     return (await transactionsCollection.doc(userId).get()).data()
 }

@@ -18,7 +18,7 @@ import {
 import cors from "cors";
 import moment from "moment";
 import { exchangeToken, getAccounts, getAllTransactions, getPlaidLinkToken } from "./plaid";
-import { getAccessTokens, getDbAccounts, getTransactions, storeAccessToken, storeAccounts, storeTransactions } from "./firebase";
+import { getDbAccessTokens, getDbAccounts, getDbTransactions, storeAccessToken, storeAccounts, storeTransactions } from "./firebase";
 import { UserTransactionEntry } from "./transaction";
 
 dotenv.config();
@@ -88,7 +88,7 @@ app.get(
     console.log("received accounts request");
     try {
       const userId = getUserId(req);
-      const accessTokens = await getAccessTokens(userId);
+      const accessTokens = await getDbAccessTokens(userId);
       if (!accessTokens || accessTokens.length == 0) {
         console.log("No access tokens")
         res.json([])
@@ -227,7 +227,7 @@ app.use(errorHandler);
 
 async function _getUserTransactions(userId: string, start: string, end: string) {
   var userTransEntry: UserTransactionEntry | undefined;
-  const userTransactions = (await getTransactions(userId));
+  const userTransactions = (await getDbTransactions(userId));
   if (userTransactions) {
     console.log("User has transactions on record");
     const updateStart = new Date(start).getTime() < new Date(userTransactions.startDate).getTime();
@@ -236,7 +236,7 @@ async function _getUserTransactions(userId: string, start: string, end: string) 
       console.log("Update start: " + updateStart + ", update end: " + updateEnd);
       if (updateStart) userTransactions.startDate = start;
       if (updateEnd) userTransactions.endDate = end;
-      userTransEntry = await getAllTransactions(await getAccessTokens(userId), start, end);
+      userTransEntry = await getAllTransactions(await getDbAccessTokens(userId), start, end);
       if (userTransEntry) {
         await storeTransactions(userId, userTransEntry);
       } else {
@@ -247,7 +247,7 @@ async function _getUserTransactions(userId: string, start: string, end: string) 
     }
   } else {
     console.log("No user transactions on record");
-    userTransEntry = await getAllTransactions(await getAccessTokens(userId), start, end);
+    userTransEntry = await getAllTransactions(await getDbAccessTokens(userId), start, end);
     if (userTransEntry) {
       await storeTransactions(userId, userTransEntry);
     } else {
