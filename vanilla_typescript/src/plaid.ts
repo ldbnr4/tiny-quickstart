@@ -64,30 +64,34 @@ export async function getAllTransactions(accessTokens: string[], start: string, 
             // for await (const token of allAccessTokens) {
             // var cursor;
             // var data: TransactionsGetResponse;
-            // var counter = 0;
+            var hasMore = true;
+            var counter = 0;
             console.log("calling plaid transactions API with token: " + token);
-            // do {
-            const data = (await _getTransactions({
-                access_token: token,
-                start_date: start,
-                end_date: end,
-                // options: {
-                //   count: 500,
-                //   offset: 0
-                // }
-                // count: 500,
-                // cursor: cursor
-            })).data.transactions;
-            allTrans = [...allTrans, ...data];
-            // newTrans = [...newTrans, ...data.added];
-            // modTrans = [...modTrans, ...data.modified];
-            // removeTrans = [...removeTrans, ...data.removed]
-            // cursor = data.next_cursor;
-            // counter++;
-            // console.log("counter: " + counter);
-            // console.log("has more: " + data.has_more);
-            // console.log("cursor: " + data.next_cursor)
-            // } while (data.has_more && counter <= 10);
+            do {
+                const data = (await _getTransactions({
+                    access_token: token,
+                    start_date: start,
+                    end_date: end,
+                    options: {
+                        //   count: 500,
+                        offset: counter
+                    }
+                    // count: 500,
+                    // cursor: cursor
+                })).data
+                allTrans = [...allTrans, ...data.transactions]
+                counter += data.transactions.length
+                hasMore = counter < data.total_transactions
+                console.log("got " + counter + " transactions with " + data.total_transactions + " remaining.")
+                // newTrans = [...newTrans, ...data.added];
+                // modTrans = [...modTrans, ...data.modified];
+                // removeTrans = [...removeTrans, ...data.removed]
+                // cursor = data.next_cursor;
+                // counter++;
+                // console.log("counter: " + counter);
+                // console.log("has more: " + data.has_more);
+                // console.log("cursor: " + data.next_cursor)
+            } while (hasMore);
             // }
         })
     );
