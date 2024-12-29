@@ -95,8 +95,8 @@ app.get(
         return
       }
       var allAccounts = await getDbAccounts(userId);
-      if (allAccounts.length == 0) {
-        console.log("User did not have any accounts on record")
+      if (allAccounts.length == 0 || req.query.refresh == "true") {
+        console.log("Getting account from Plaid: no_accounts=" + (allAccounts.length == 0) + ", refresh=" + req.query.refresh)
         await Promise.all(accessTokens
           .map(async (token) => {
             console.log("Calling plaid accounts API with token: " + token)
@@ -104,6 +104,11 @@ app.get(
             allAccounts = [...allAccounts, ...accountsResponse.data.accounts]
           })
         )
+
+        // Dedupe all accounts
+        allAccounts = Array.from(
+          new Map(allAccounts.map((item) => [item.official_name, item])).values()
+        );
         await storeAccounts(userId, allAccounts)
       }
       res.json(allAccounts.map(account => {
