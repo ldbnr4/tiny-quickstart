@@ -120,7 +120,7 @@ app.get(
       })
       )
     } catch (error) {
-      console.log(error)
+      console.log(error);
       next(error);
     }
   }
@@ -210,7 +210,7 @@ type PotentialPlaidError = Error & {
 const errorHandler: ErrorRequestHandler = (
   err: PotentialPlaidError,
   req: Request,
-  res: Response) => {
+  res: Response, next: NextFunction) => {
   console.error(`Received an error for ${req.method} ${req.path}`);
   if (err.response) {
     const plaidError: PlaidError = err.response.data;
