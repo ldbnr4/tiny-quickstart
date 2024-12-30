@@ -31,44 +31,46 @@ describe("Test server.ts", () => {
         server.close()
     });
 
-    test("Get accounts", async () => {
+    test("Get accounts, no previous record", async () => {
         setupMockAccessTokens();
         jest.mocked(getDbAccounts).mockReturnValueOnce([] as unknown as Promise<AccountBase[]>);
         jest.mocked(getAccounts).mockReturnValueOnce(
             {
                 data: {
-                    accounts: [{
-                        account_id: 'test_id',
-                        balances: {
-                            available: 100,
-                            current: 100,
-                            limit: null,
-                            iso_currency_code: null,
-                            unofficial_currency_code: null
-                        },
-                        mask: null,
-                        name: 'test_name',
-                        official_name: 'test_official_name',
-                        type: AccountType.Depository,
-                        subtype: AccountSubtype.Checking
-                    }],
+                    accounts: [getTestAccount()],
                 }
             } as unknown as Promise<AxiosResponse<AccountsGetResponse>>
         )
 
-        await request(app).get("/api/accounts").expect(200, [{
-            "id": "test_id",
-            "name": "test_name",
-            "official_name": "test_official_name",
-            "available_balance": 100,
-            "current_balance": 100,
-            "type": "depository",
-            "subtype": "checking"
-        }]);
+        await request(app).get("/api/accounts").expect(200, [getTestAccountResult()]);
         server.close()
     });
 
-    test("Get transactions", async () => {
+    test("Get accounts, has previous record", async () => {
+        jest.mocked(getDbAccounts).mockReturnValueOnce([getTestAccount()] as unknown as Promise<AccountBase[]>);
+
+        await request(app).get("/api/accounts").expect(200, [getTestAccountResult()]);
+        server.close()
+    });
+
+    test("Get accounts, updates becuase of refresh", async () => {
+        setupMockAccessTokens();
+        jest.mocked(getDbAccounts).mockReturnValueOnce([getTestAccount()] as unknown as Promise<AccountBase[]>);
+        jest.mocked(getAccounts).mockReturnValueOnce(
+            {
+                data: {
+                    accounts: [getTestAccount(), getTestAccount("test2")],
+                }
+            } as unknown as Promise<AxiosResponse<AccountsGetResponse>>
+        )
+
+        await request(app).get("/api/accounts")
+            .query({ "refresh": "true" })
+            .expect(200, [getTestAccountResult(), getTestAccountResult("test2")]);
+        server.close()
+    });
+
+    test("Get transactions, no previous record", async () => {
         jest.mocked(getAllTransactions).mockReturnValueOnce(
             {
                 transactions: [getTestTransaction()],
@@ -82,7 +84,7 @@ describe("Test server.ts", () => {
 
     });
 
-    test("Get transactions, update", async () => {
+    test("Get transactions, update because of end date", async () => {
         setupMockAccessTokens()
         jest.mocked(getDbTransactions).mockReturnValueOnce(
             {
@@ -103,7 +105,35 @@ describe("Test server.ts", () => {
         server.close()
     });
 
-    test("Get transactions, empty", async () => {
+    test("Get transactions, update because of start date", async () => {
+        setupMockAccessTokens()
+        jest.mocked(getDbTransactions).mockReturnValueOnce(
+            {
+                startDate: "2024-08-20",
+                endDate: "2024-08-20",
+                transactions: []
+            } as unknown as Promise<FirebaseFirestore.DocumentData>
+        )
+        jest.mocked(getAllTransactions).mockReturnValueOnce(
+            {
+                transactions: [getTestTransaction()],
+            } as unknown as Promise<UserTransactionEntry>
+        )
+
+        await request(app).get("/api/transactions")
+            .query({ "startDate": "2024-08-19", "endDate": "2024-08-21" })
+            .expect(200, [getTestTransactionResult()]);
+        server.close()
+    });
+
+    test("Get transactions, empty because no response from plaid", async () => {
+        await request(app).get("/api/transactions")
+            .query({ "startDate": "2024-08-20", "endDate": "2024-08-21" })
+            .expect(200, []);
+        server.close()
+    });
+
+    test("Get transactions, no update because of same dates", async () => {
         setupMockAccessTokens()
         jest.mocked(getDbTransactions).mockReturnValueOnce(
             {
@@ -112,13 +142,69 @@ describe("Test server.ts", () => {
                 transactions: [getTestTransaction()]
             } as unknown as Promise<FirebaseFirestore.DocumentData>
         )
+        jest.mocked(getAllTransactions).mockReturnValueOnce(
+            {
+                transactions: [getTestTransaction(), getTestTransaction()],
+            } as unknown as Promise<UserTransactionEntry>
+        )
 
         await request(app).get("/api/transactions")
-            .query({ "startDate": "2024-08-20", "endDate": "2024-08-21" })
-            .expect(200, []);
+            .query({ "startDate": "2024-08-20", "endDate": "2024-08-20" })
+            .expect(200, [getTestTransactionResult()]);
+        server.close()
+    });
+
+    test("Get transactions, update because of refresh", async () => {
+        setupMockAccessTokens()
+        jest.mocked(getDbTransactions).mockReturnValueOnce(
+            {
+                startDate: "2024-08-20",
+                endDate: "2024-08-20",
+                transactions: []
+            } as unknown as Promise<FirebaseFirestore.DocumentData>
+        )
+        jest.mocked(getAllTransactions).mockReturnValueOnce(
+            {
+                transactions: [getTestTransaction(), getTestTransaction()],
+            } as unknown as Promise<UserTransactionEntry>
+        )
+
+        await request(app).get("/api/transactions")
+            .query({ "startDate": "2024-08-20", "endDate": "2024-08-20", "refresh": "true" })
+            .expect(200, [getTestTransactionResult(), getTestTransactionResult()]);
         server.close()
     });
 });
+
+function getTestAccountResult(official_name: String = "test_official_name"): any {
+    return {
+        "id": "test_id",
+        "name": "test_name",
+        "official_name": official_name,
+        "available_balance": 100,
+        "current_balance": 100,
+        "type": "depository",
+        "subtype": "checking"
+    };
+}
+
+function getTestAccount(official_name: String = 'test_official_name') {
+    return {
+        account_id: 'test_id',
+        balances: {
+            available: 100,
+            current: 100,
+            limit: null,
+            iso_currency_code: null,
+            unofficial_currency_code: null
+        },
+        mask: null,
+        name: 'test_name',
+        official_name: official_name,
+        type: AccountType.Depository,
+        subtype: AccountSubtype.Checking
+    };
+}
 
 function setupMockAccessTokens() {
     jest.mocked(getDbAccessTokens).mockReturnValueOnce(

@@ -88,16 +88,10 @@ app.get(
     console.log("received accounts request");
     try {
       const userId = getUserId(req);
-      const accessTokens = await getDbAccessTokens(userId);
-      if (!accessTokens || accessTokens.length == 0) {
-        console.log("No access tokens")
-        res.json([])
-        return
-      }
       var allAccounts = await getDbAccounts(userId);
       if (allAccounts.length == 0 || req.query.refresh == "true") {
         console.log("Getting account from Plaid: no_accounts=" + (allAccounts.length == 0) + ", refresh=" + req.query.refresh)
-        await Promise.all(accessTokens
+        await Promise.all((await getDbAccessTokens(userId))
           .map(async (token) => {
             console.log("Calling plaid accounts API with token: " + token)
             const accountsResponse = await getAccounts(token)
@@ -126,6 +120,7 @@ app.get(
       })
       )
     } catch (error) {
+      console.log(error)
       next(error);
     }
   }
@@ -140,7 +135,8 @@ app.get("/api/transactions",
       const start = req.query.startDate === undefined || req.query.startDate.length == 0 ? moment().subtract(30, 'days').format('YYYY-MM-DD') : String(req.query.startDate);
       const end = req.query.endDate === undefined || req.query.endDate.length == 0 ? moment().format('YYYY-MM-DD') : String(req.query.endDate);
       const userId = getUserId(req);
-      const userTransEntry = await _getUserTransactions(userId, start, end);
+      const userTransEntry = await _getUserTransactions(
+        userId, start, end, req.query.refresh == "true" ? true : false);
       if (!userTransEntry) {
         console.log("Failed to get user transactions")
         res.json([])
@@ -172,6 +168,7 @@ app.get("/api/transactions",
           }))
       }
     } catch (error) {
+      console.log(error);
       next(error);
     }
   }
@@ -230,15 +227,15 @@ const errorHandler: ErrorRequestHandler = (
 
 app.use(errorHandler);
 
-async function _getUserTransactions(userId: string, start: string, end: string) {
+async function _getUserTransactions(userId: string, start: string, end: string, refresh: boolean) {
   var userTransEntry: UserTransactionEntry | undefined;
   const userTransactions = (await getDbTransactions(userId));
   if (userTransactions) {
     console.log("User has transactions on record");
     const updateStart = new Date(start).getTime() < new Date(userTransactions.startDate).getTime();
     const updateEnd = new Date(end).getTime() > new Date(userTransactions.endDate).getTime();
-    if (updateStart || updateEnd) {
-      console.log("Update start: " + updateStart + ", update end: " + updateEnd);
+    if (refresh || updateStart || updateEnd) {
+      console.log("Updating transactions")
       if (updateStart) userTransactions.startDate = start;
       if (updateEnd) userTransactions.endDate = end;
       userTransEntry = await getAllTransactions(await getDbAccessTokens(userId), start, end);
