@@ -12,14 +12,22 @@ import express, {
 } from "express";
 import bodyParser from "body-parser";
 import {
+  AccountSubtype,
+  AccountType,
+  InvestmentsHoldingsGetResponse,
+  InvestmentTransaction,
   PlaidError,
   Transaction,
 } from "plaid";
 import cors from "cors";
 import moment from "moment";
-import { exchangeToken, getAccounts, getAllTransactions, getPlaidLinkToken } from "./plaid";
-import { getDbAccessTokens, getDbAccounts, getDbTransactions, storeAccessToken, storeAccounts, storeTransactions } from "./firebase";
-import { UserTransactionEntry } from "./transaction";
+import { exchangeToken, getAccounts, getAllTransactions, getCategories, getInstitution, getInvestments, getInvetmentTransactions, getPlaidLinkToken } from "./plaid";
+import { deleteDbTransactions, deleteDbAccounts, getDbAccessTokens, getDbAccounts, getDbTransactions, storeAccessToken, storeAccounts, storeTransactions, getDbInvestments, storeInvestments, deleteDbInvestments, getDbInvestmentTransactions, storeInvestmentTransactions, storeCryptoBalances, getDbCryptoBalances, deleteDbCryptoBalances } from "./firebase";
+import { UserInvestmentTransactionEntry, UserTransactionEntry } from "./transaction";
+import { AccountLink, AccountLinkResponse, AccountResponse } from "./account_link";
+import { addAssetClassToAccount, convertInvestmentIntoAccounts, removeAndDeleteAccessTokens, testFun } from "./middleware";
+import { isAddress } from "web3-validator";
+import { getTokens } from "./crypto";
 
 dotenv.config();
 export const app: Application = express();
@@ -28,151 +36,301 @@ app.use(cors());
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
+app.post("/api/test", async (req: Request, res: Response, next: NextFunction) => {
+  console.log("received test request");
+  await testFun();
+  res.json(null);
+});
+
 //Creates a Link token and return it
-app.get(
-  "/api/create_link_token",
-  async (req: Request, res: Response, next: NextFunction) => {
-    console.log("create link token request")
-    try {
-      const tokenResponse = await getPlaidLinkToken(getUserId(req));
-      res.json(tokenResponse.data);
-    } catch (error) {
-      console.log(error)
-      next(error);
-    }
+app.get("/api/create_link_token", async (req: Request, res: Response, next: NextFunction) => {
+  console.log("create link token request")
+  try {
+    const tokenResponse = await getPlaidLinkToken(getUserId(req));
+    res.json(tokenResponse.data);
+  } catch (error) {
+    console.log(error)
+    next(error);
   }
+}
 );
 
 // Exchanges the public token from Plaid Link for an access token
-app.post(
-  "/api/exchange_public_token",
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      console.log("exchange token request")
-      const exchangeResponse = await exchangeToken(req.body.public_token);
-      await storeAccessToken(exchangeResponse.data.access_token, getUserId(req));
-      console.log("stored access token: " + exchangeResponse.data.access_token);
-      res.json(true)
-    } catch (error) {
-      console.log(error)
-      next(error);
-    }
+app.post("/api/exchange_public_token", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    console.log("exchange token request")
+    const exchangeResponse = await exchangeToken(req.body.public_token);
+    await storeAccessToken(exchangeResponse.data.access_token, getUserId(req));
+    console.log("stored access token: " + exchangeResponse.data.access_token);
+    res.json(null)
+  } catch (error) {
+    console.log(error)
+    next(error);
   }
-);
+});
 
-// app.post(
-//   "/api/add_access_token",
-//   async (req: Request, res: Response, next: NextFunction) => {
-//     try {
-//       const docRef = accessTokenCollection.doc(req.body.user_id);
-//       // Atomically add a new region to the "regions" array field.
-//       // const unionRes = await docRef.update({
-//       //   tokens: FieldValue.arrayUnion('greater_virginia')
-//       // });
-//       await docRef.set({
-//         tokens: FieldValue.arrayUnion('token')
-//       }, {
-//         merge: true
-//       });
-//       res.json(true)
-//     } catch (error) {
-//       console.log("error")
-//       next(error);
-//     }
-//   }
-// );
-
-app.get(
-  "/api/accounts",
-  async (req: Request, res: Response, next: NextFunction) => {
-    console.log("received accounts request");
-    try {
-      const userId = getUserId(req);
-      var allAccounts = await getDbAccounts(userId);
-      if (allAccounts.length == 0 || req.query.refresh == "true") {
-        console.log("Getting account from Plaid: no_accounts=" + (allAccounts.length == 0) + ", refresh=" + req.query.refresh)
-        await Promise.all((await getDbAccessTokens(userId))
-          .map(async (token) => {
-            console.log("Calling plaid accounts API with token: " + token)
-            const accountsResponse = await getAccounts(token)
-            allAccounts = [...allAccounts, ...accountsResponse.data.accounts]
-          })
-        )
-
-        // Dedupe all accounts
-        allAccounts = Array.from(
-          new Map(allAccounts.map((item) => [item.official_name, item])).values()
-        );
-        await storeAccounts(userId, allAccounts)
+app.get("/api/accounts", async (req: Request, res: Response, next: NextFunction) => {
+  console.log("received accounts request");
+  try {
+    const userId = getUserId(req);
+    var allAccounts = await getDbAccounts(userId);
+    if (allAccounts.length == 0 || req.query.refresh == "true") {
+      console.log("Getting account from Plaid: no_accounts=" + (allAccounts.length == 0) + ", refresh=" + req.query.refresh)
+      if (req.query.refresh) {
+        allAccounts = []
       }
-      res.json(allAccounts.map(account => {
-        // console.log(account)
-        // Add filter for checking and savings accounts
-        return {
-          id: account.account_id,
-          name: account.name,
-          official_name: account.official_name,
-          available_balance: account.balances.available,
-          current_balance: account.balances.current,
-          type: account.type,
-          subtype: account.subtype
-        }
-      })
+      await Promise.all((await getDbAccessTokens(userId))
+        .map(async (token) => {
+          console.log("Calling plaid accounts API with token: " + token)
+          const accountsResponse = (await getAccounts(token)).data
+          const accountItem = accountsResponse.item
+          const institution = await getInstitution(accountItem.institution_id ?? "")
+          const accountLink = {
+            item_id: accountItem.item_id,
+            institution_id: institution.institution_id,
+            name: institution.name,
+            url: institution.url,
+            accounts: addAssetClassToAccount(accountsResponse.accounts
+              .filter(account =>
+                account.subtype === AccountSubtype.Checking
+                || account.subtype === AccountSubtype.Savings
+                || account.type === AccountType.Credit)
+            )
+          } as AccountLink;
+
+          const investments = await getInvestments(token)
+          if (investments) {
+            accountLink.accounts = accountLink.accounts.concat(convertInvestmentIntoAccounts(investments))
+          }
+
+          allAccounts = [...allAccounts, accountLink]
+        })
       )
-    } catch (error) {
-      console.log(error);
-      next(error);
+      await storeAccounts(userId, allAccounts)
     }
+    res.json(await Promise.all(allAccounts.map(async accountLink => {
+      return {
+        name: accountLink.name,
+        institution_id: accountLink.institution_id,
+        institution_logo: (await getInstitution(accountLink.institution_id)).logo ?? "",
+        url: accountLink.url,
+        accounts: accountLink.accounts.map(account => {
+          return {
+            id: account.account_id,
+            name: account.name,
+            official_name: account.official_name,
+            available_balance: account.balances.available,
+            current_balance: account.balances.current,
+            type: account.type,
+            sub_type: account.subtype,
+            asset_class: account.asset_class,
+            institution_id: accountLink.institution_id,
+          } as AccountResponse
+        }) as AccountResponse[]
+      } as AccountLinkResponse
+    })
+    ) as AccountLinkResponse[])
+  } catch (error) {
+    console.log(error);
+    next(error);
   }
+});
+
+app.get("/api/investments", async (req: Request, res: Response, next: NextFunction) => {
+  console.log("received investments request");
+  try {
+    const userId = getUserId(req);
+    var allInvestments: InvestmentsHoldingsGetResponse[] = await getDbInvestments(userId);
+    if (allInvestments.length == 0 || req.query.refresh == "true") {
+      console.log("Getting investments from Plaid")
+      if (req.query.refresh) {
+        allInvestments = []
+      }
+      await Promise.all((await getDbAccessTokens(userId))
+        .map(async (token) => {
+          console.log("Calling plaid investments API with token: " + token)
+          const investments = await getInvestments(token)
+          if (investments) {
+            allInvestments = [...allInvestments, investments]
+          }
+        })
+      )
+      await storeInvestments(userId, allInvestments)
+    }
+    return res.json(allInvestments)
+
+  } catch (error) {
+    console.log(error);
+    next(error);
+  }
+});
+
+app.get("/api/investment_transactions", async (req: Request, res: Response, next: NextFunction) => {
+  console.log("received investment transactions request");
+  try {
+    const start = req.query.startDate === undefined || req.query.startDate.length == 0 ? moment().subtract(30, 'days').format('YYYY-MM-DD') : String(req.query.startDate);
+    const end = req.query.endDate === undefined || req.query.endDate.length == 0 ? moment().format('YYYY-MM-DD') : String(req.query.endDate);
+    const userId = getUserId(req);
+    const userInvestmentTransEntry = await _getInvetmentTransactions(
+      userId, start, end, req.query.refresh == "true" ? true : false);
+    if (!userInvestmentTransEntry) {
+      console.log("Failed to get user investment transactions")
+      res.json([])
+    }
+    else {
+      res.json(userInvestmentTransEntry.transactions
+        .filter((transaction: InvestmentTransaction) =>
+          new Date(transaction.date).getTime() >= new Date(start).getTime()
+          && new Date(transaction.date).getTime() <= new Date(end).getTime()
+        )
+        .map(transaction => {
+          // console.log(tranasction)
+          return {
+            id: transaction.investment_transaction_id,
+            accountId: transaction.account_id,
+            date: transaction.date,
+            amount: transaction.amount,
+            name: transaction.name,
+            type: transaction.type,
+            quantity: transaction.quantity,
+            price: transaction.price,
+          };
+        }))
+    }
+  } catch (error) {
+    console.log(error);
+    next(error);
+  }
+});
+
+app.get("/api/transactions", async (req: Request, res: Response, next: NextFunction) => {
+  console.log("received transactions request");
+  try {
+    const accountId = req.get("Account-Id") ?? ""
+    const category = req.get("Category") ?? ""
+    const start = req.query.startDate === undefined || req.query.startDate.length == 0 ? moment().subtract(30, 'days').format('YYYY-MM-DD') : String(req.query.startDate);
+    const end = req.query.endDate === undefined || req.query.endDate.length == 0 ? moment().format('YYYY-MM-DD') : String(req.query.endDate);
+    const userId = getUserId(req);
+    const userTransEntry = await _getUserTransactions(
+      userId, start, end, req.query.refresh == "true" ? true : false);
+    if (!userTransEntry) {
+      console.log("Failed to get user transactions")
+      res.json([])
+    }
+    else {
+      res.json(userTransEntry.transactions
+        .filter((transaction: Transaction) =>
+          (accountId.length == 0 || transaction.account_id === accountId)
+          && (category.length == 0 || transaction.personal_finance_category?.primary === category)
+          && new Date(transaction.date).getTime() >= new Date(start).getTime()
+          && new Date(transaction.date).getTime() <= new Date(end).getTime()
+        )
+        // .sort((a: Transaction, b: Transaction) => new Date(a.date).getTime() - new Date(b.date).getTime())
+        .map(transaction => {
+          // console.log(tranasction)
+          return {
+            id: transaction.transaction_id,
+            accountId: transaction.account_id,
+            date: transaction.date,
+            amount: transaction.amount,
+            name: transaction.name,
+            category: transaction.xCategory,
+            pf_category: transaction.personal_finance_category?.primary,
+            detailed_category: transaction.personal_finance_category?.detailed,
+            category_logo_url: transaction.personal_finance_category_icon_url,
+            cp_name: transaction.counterparties?.at(0)?.name,
+            cp_logo_url: transaction.counterparties?.at(0)?.logo_url,
+            merchant: transaction.merchant_name,
+            logo_url: transaction.logo_url,
+          };
+        }))
+    }
+  } catch (error) {
+    console.log(error);
+    next(error);
+  }
+});
+
+app.get("/api/crypto_balances", async (req: Request, res: Response, next: NextFunction) => {
+  const userId = getUserId(req);
+  try {
+    const balances = await getDbCryptoBalances(userId);
+    if (!balances) {
+      res.json(false);
+      return;
+    }
+    if (balances.last_updated && moment().diff(moment(balances.last_updated), 'hours') < 24
+      || (req.query.refresh ?? false)) {
+      res.json(balances);
+    } else {
+      const newBalances = await getTokens(balances.address);
+      await storeCryptoBalances(userId, balances.address, newBalances);
+      res.json(newBalances);
+    }
+  } catch (error) {
+    console.log(error);
+    next(error);
+  }
+});
+
+app.post("/api/store_crypto_address", async (req: Request, res: Response, next: NextFunction) => {
+  const userId = getUserId(req);
+  const walletAddress = req.body.address;
+
+  if (!isAddress(walletAddress)) {
+    return res.status(400).json({ error: "Invalid wallet address" });
+  }
+
+  try {
+    await storeCryptoBalances(userId, walletAddress, await getTokens(walletAddress));
+    res.json(true);
+  } catch (error) {
+    console.log(error);
+    next(error);
+  }
+});
+
+app.get("/api/token_values", async (req: Request, res: Response, next: NextFunction) => {
+  const address = req.query.address as string;
+  if (!isAddress(address)) {
+    return res.status(400).json({ error: "Invalid address" });
+  }
+
+  try {
+    res.json(await getTokens(address));
+  } catch (error) {
+    console.log(error);
+    next(error);
+  }
+});
+
+app.post("/api/reset", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = getUserId(req);
+    console.log(`Resetting data for user: ${userId}`);
+    await Promise.all([
+      (req.body.accounts ?? true) && deleteDbAccounts(userId),
+      (req.body.transactions ?? true) && deleteDbTransactions(userId),
+      (req.body.investments ?? true) && deleteDbInvestments(userId),
+      (req.body.tokens ?? true) && removeAndDeleteAccessTokens(userId),
+      (req.body.crypto ?? true) && deleteDbCryptoBalances(userId),
+    ].filter(Boolean) as Promise<void>[]);
+    res.json({ success: true });
+  } catch (error) {
+    console.log(error);
+    next(error);
+  }
+}
 );
 
-app.get("/api/transactions",
-  async (req: Request, res: Response, next: NextFunction) => {
-    console.log("received transactions request");
-    try {
-      const accountId = req.get("Account-Id") ?? ""
-      const category = req.get("Category") ?? ""
-      const start = req.query.startDate === undefined || req.query.startDate.length == 0 ? moment().subtract(30, 'days').format('YYYY-MM-DD') : String(req.query.startDate);
-      const end = req.query.endDate === undefined || req.query.endDate.length == 0 ? moment().format('YYYY-MM-DD') : String(req.query.endDate);
-      const userId = getUserId(req);
-      const userTransEntry = await _getUserTransactions(
-        userId, start, end, req.query.refresh == "true" ? true : false);
-      if (!userTransEntry) {
-        console.log("Failed to get user transactions")
-        res.json([])
-      }
-      else {
-        res.json(userTransEntry.transactions
-          .filter((transaction: Transaction) =>
-            (accountId.length == 0 || transaction.account_id === accountId)
-            && (category.length == 0 || transaction.personal_finance_category?.primary === category)
-            && new Date(transaction.date).getTime() >= new Date(start).getTime()
-            && new Date(transaction.date).getTime() <= new Date(end).getTime()
-          )
-          .map(transaction => {
-            // console.log(tranasction)
-            return {
-              id: transaction.transaction_id,
-              accountId: transaction.account_id,
-              date: transaction.date,
-              amount: transaction.amount,
-              name: transaction.name,
-              category: transaction.personal_finance_category?.primary,
-              detailed_category: transaction.personal_finance_category?.detailed,
-              category_logo_url: transaction.personal_finance_category_icon_url,
-              cp_name: transaction.counterparties?.at(0)?.name,
-              cp_logo_url: transaction.counterparties?.at(0)?.logo_url,
-              merchant: transaction.merchant_name,
-              logo_url: transaction.logo_url,
-            };
-          }))
-      }
-    } catch (error) {
-      console.log(error);
-      next(error);
-    }
+app.get("/api/transaction_categories", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.json(await getCategories());
+  } catch (error) {
+    console.log(error);
+    next(error);
   }
-);
+});
 
 // app.get("/api/transaction_categories",
 //   async (req: Request, res: Response, next: NextFunction) => {
@@ -257,6 +415,38 @@ async function _getUserTransactions(userId: string, start: string, end: string, 
     }
   }
   return userTransEntry;
+}
+
+async function _getInvetmentTransactions(userId: string, start: string, end: string, refresh: boolean): Promise<UserInvestmentTransactionEntry | undefined> {
+  var userInvestmentTransEntry: UserInvestmentTransactionEntry | undefined;
+  const userInvestmentTransactions = (await getDbInvestmentTransactions(userId));
+  if (userInvestmentTransactions) {
+    console.log("User has investment transactions on record");
+    const updateStart = new Date(start).getTime() < new Date(userInvestmentTransactions.startDate).getTime();
+    const updateEnd = new Date(end).getTime() > new Date(userInvestmentTransactions.endDate).getTime();
+    if (refresh || updateStart || updateEnd) {
+      console.log("Updating investment transactions")
+      if (updateStart) userInvestmentTransactions.startDate = start;
+      if (updateEnd) userInvestmentTransactions.endDate = end;
+      userInvestmentTransEntry = await getInvetmentTransactions(await getDbAccessTokens(userId), start, end);
+      if (userInvestmentTransEntry) {
+        await storeInvestmentTransactions(userId, userInvestmentTransEntry);
+      } else {
+        console.log("Did not store investment transactions")
+      }
+    } else {
+      userInvestmentTransEntry = userInvestmentTransactions as UserInvestmentTransactionEntry;
+    }
+  } else {
+    console.log("No user investment transactions on record");
+    userInvestmentTransEntry = await getInvetmentTransactions(await getDbAccessTokens(userId), start, end);
+    if (userInvestmentTransEntry) {
+      await storeInvestmentTransactions(userId, userInvestmentTransEntry);
+    } else {
+      console.log("Did not store investment transactions")
+    }
+  }
+  return userInvestmentTransEntry;
 }
 
 function getUserId(req: Request): string {
