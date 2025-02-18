@@ -4,6 +4,7 @@ import { xAccountBase } from "./account_link";
 import { deleteDbAccessTokens, getDbAccessTokens } from "./firebase";
 import { removeAccessToken } from "./plaid";
 import { xAssetClasses, xCategories } from "./consts";
+import { classifyTransaction, getClassifier, trainClassifier } from "./transaction_classifier";
 
 function findAssetClass(value: string): string {
     for (const assetClass of xAssetClasses) {
@@ -17,26 +18,46 @@ function findAssetClass(value: string): string {
 }
 
 // Function to map a transaction to a budget category
-function mapCategoriesToXCategory(
+export function mapCategoriesToXCategory(
     categories: string[],
 ): string {
     for (const plaidCategory of categories) {
         for (const xCat of xCategories) {
             for (const keyword of xCat.items) {
                 if (plaidCategory.includes(keyword)) {
-                    return xCat.name; // Return the matched budget category
+                    return xCat.name;
                 }
             }
         }
     }
-    console.log("Uncategorized transaction: ", categories);
-    return "Uncategorized"; // If no match is found, return "Uncategorized"
+    // console.log("Uncategorized transaction: ", categories);
+    return "Uncategorized";
 }
 
-export function addXCategoryToTransactions(transactions: Transaction[]): xTransaction[] {
-    return transactions.map((transaction) => {
-        const xCategory = mapCategoriesToXCategory(transaction.category ?? []);
-        return { ...transaction, xCategory };
+export async function addXCategoryToTransactions(transactions: Transaction[]): Promise<xTransaction[]> {
+    let classifier;
+    try {
+        classifier = await getClassifier();
+    } catch (error) {
+        console.error("Error getting classifier:", error);
+        classifier = null;
+    }
+    return transactions.map(transaction => {
+        const predictedCategory = classifier ? classifyTransaction(transaction, classifier) : "Uncategorized";
+        const categories = [...(transaction.category ?? []), transaction.personal_finance_category?.primary ?? "", transaction.personal_finance_category?.detailed ?? ""];
+        const fallbackCategory = mapCategoriesToXCategory(categories);
+
+        if (predictedCategory !== fallbackCategory && classifier != null) {
+            console.log(`Predicted category (${predictedCategory}), fallback category (${fallbackCategory}), differ for transaction:`, transaction);
+        }
+
+        // Combine predictions (e.g., use prediction primarily, fallback if it's "Uncategorized" or uncertain)
+        const xCategory = predictedCategory !== "Uncategorized" ? predictedCategory : fallbackCategory;
+
+        return {
+            ...transaction,
+            xCategory,
+        };
     });
 }
 

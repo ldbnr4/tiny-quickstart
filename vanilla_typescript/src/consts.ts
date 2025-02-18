@@ -216,7 +216,7 @@ export const xCategories: XClassification[] = [
         ],
     },
     {
-        name: "Healthcare",
+        name: "Health",
         items: [
             "Acupuncture",
             "Alternative Medicine",
@@ -294,7 +294,7 @@ export const xCategories: XClassification[] = [
         ],
     },
     {
-        name: "Personal",
+        name: "Shopping",
         items: [
             "Accessories Store",
             "Adult",

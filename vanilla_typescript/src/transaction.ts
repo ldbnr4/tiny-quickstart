@@ -7,7 +7,8 @@ export interface UserTransactionEntry {
     transactions: xTransaction[];
     startDate: string;
     endDate: string;
-};
+}
+
 export interface UserInvestmentTransactionEntry {
     transactions: InvestmentTransaction[];
     startDate: string;
