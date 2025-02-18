@@ -1,4 +1,4 @@
-import { AccountBase, AccountsBalanceGetResponsePaymentRiskAssessment } from "plaid";
+import { AccountBase } from "plaid";
 
 export interface AccountLink {
     item_id: string,

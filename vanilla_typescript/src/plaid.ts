@@ -1,7 +1,12 @@
-import { Configuration, CountryCode, LinkTokenCreateRequest, PlaidApi, PlaidEnvironments, Products, Transaction, TransactionsGetRequest, TransactionsSyncRequest, RemovedTransaction, TransactionsSyncResponse, InvestmentsHoldingsGetResponse, InvestmentTransaction } from "plaid";
+import { Configuration, CountryCode, LinkTokenCreateRequest, PlaidApi, PlaidEnvironments, Products, Transaction, TransactionsGetRequest, TransactionsSyncRequest, RemovedTransaction, TransactionsSyncResponse, InvestmentTransaction, AccountSubtype, AccountType } from "plaid";
 import dotenv from "dotenv";
-import { UserInvestmentTransactionEntry, UserTransactionEntry, xTransaction } from "./transaction";
-import { addXCategoryToTransactions } from "./middleware";
+import { AxiosError } from "axios";
+import { UserInvestmentTransactionEntry, UserTransactionEntry } from "./transaction";
+import { addAssetClassToAccount, addXCategoryToTransactions, convertInvestmentIntoAccounts } from "./middleware";
+import { TroubledToken } from "./token";
+import { deleteTroubledTokens, storeTroubledTokens } from "./firebase";
+import { ApiResponse } from "./response";
+import { AccountLink } from "./account_link";
 
 dotenv.config();
 
@@ -24,19 +29,24 @@ const client: PlaidApi = new PlaidApi(config);
 
 const linkConfigObject: LinkTokenCreateRequest = {
     user: { client_user_id: "" },
-    client_name: "Black Wall Street",
+    client_name: "WealthWeaver",
     language: "en",
     products: [Products.Transactions],
-    additional_consented_products: [Products.Investments],
+    optional_products: [Products.Investments],
     country_codes: [CountryCode.Us],
     redirect_uri: process.env.PLAID_SANDBOX_REDIRECT_URI,
     transactions: {
         days_requested: 730,
-    }
+    },
+    webhook: process.env.PLAID_WEBHOOK,
 };
 
-export async function getPlaidLinkToken(userId: string) {
-    const tokenResponse = await client.linkTokenCreate({ ...linkConfigObject, user: { client_user_id: userId } });
+export async function sandboxItemResetLogin(token: string) {
+    return await client.sandboxItemResetLogin({ access_token: token });
+}
+
+export async function getPlaidLinkToken(userId: string, accessToken?: string) {
+    const tokenResponse = await client.linkTokenCreate({ ...linkConfigObject, user: { client_user_id: userId }, access_token: accessToken, update: { account_selection_enabled: true } });
     console.log("created a link token");
     return tokenResponse;
 }
@@ -60,10 +70,62 @@ export async function removeAccessToken(accessToken: string) {
     }
 }
 
+export async function getAllAccounts(uid: string, accessTokens: string[], allAccounts: AccountLink[], troubledToken: TroubledToken[]) {
+    await Promise.all(accessTokens
+        .map(async (token) => {
+            console.log("Calling plaid accounts API with token: " + token)
+            let accountsResponse;
+            try {
+                accountsResponse = (await getAccounts(token)).data;
+            } catch (e) {
+                if (e instanceof AxiosError && e.response?.data.error_code === "ITEM_LOGIN_REQUIRED") {
+                    const institutionId = (await client.itemGet({ access_token: token })).data.item.institution_id;
+                    console.log("failued inst ID: " + institutionId);
+                    troubledToken.push({ token: token, iid: institutionId!, reason: "ITEM_LOGIN_REQUIRED" });
+                } else {
+                    console.log("error getting accounts: " + e);
+                }
+                return;
+            }
+            const accountItem = accountsResponse.item
+            const institution = await getInstitution(accountItem.institution_id ?? "")
+            const accountLink = {
+                item_id: accountItem.item_id,
+                institution_id: institution.institution_id,
+                name: institution.name,
+                url: institution.url,
+                accounts: addAssetClassToAccount(accountsResponse.accounts
+                    .filter(account =>
+                        account.subtype === AccountSubtype.Checking
+                        || account.subtype === AccountSubtype.Savings
+                        || account.type === AccountType.Credit)
+                )
+            } as AccountLink;
+            if (await isInvestmentsAvailable(token)) {
+                const investments = await getInvestments(token)
+                if (investments) {
+                    accountLink.accounts = accountLink.accounts.concat(convertInvestmentIntoAccounts(investments))
+                }
+            }
+            allAccounts.push(accountLink)
+        })
+    )
+    if (troubledToken.length > 0) {
+        storeTroubledTokens(uid, troubledToken);
+    }
+    if (allAccounts.length > 0) {
+        deleteTroubledTokens(uid, allAccounts.map(account => account.item_id));
+    }
+}
+
 export async function getAccounts(accessToken: string) {
     return await client.accountsGet({
         access_token: accessToken,
     })
+}
+
+export async function isInvestmentsAvailable(accessToken: string) {
+    return (await client.itemGet({ access_token: accessToken })).data.item.available_products.includes(Products.Investments);
 }
 
 export async function getInvestments(accessToken: string) {
@@ -72,7 +134,7 @@ export async function getInvestments(accessToken: string) {
             access_token: accessToken,
         })).data;
     } catch (error) {
-        console.log("error getting investments: " + error);
+        console.log("error getting investments: ", error);
     }
 }
 
@@ -152,43 +214,71 @@ export async function getTransactionsSync(accessTokens: string[], start: string,
     } as UserTransactionEntry;
 }
 
-export async function getAllTransactions(accessTokens: string[], start: string, end: string): Promise<UserTransactionEntry | undefined> {
+export async function getAllTransactions(uid: string, accessTokens: string[], start: string, end: string, forTraining: boolean = false): Promise<ApiResponse<UserTransactionEntry>> {
     if (accessTokens.length == 0) {
         console.log("Can not get transactions without access tokens")
-        return undefined
+        return { data: {} as UserTransactionEntry, failures: [] }
     }
-    var allTrans: xTransaction[] = [];
+    var allTrans: Transaction[] = [];
+    var failedTokens: TroubledToken[] = [];
+    var successTokens: string[] = [];
+    console.log("getting transactions from " + start + " to " + end);
     await Promise.all(
         accessTokens.map(async (token) => {
             var hasMore = true;
             var counter = 0;
+            var failed = false;
             console.log("calling plaid transactions API with token: " + token);
             do {
-                const data = (await _getTransactions({
-                    access_token: token,
-                    start_date: start,
-                    end_date: end,
-                    options: {
-                        count: 500,
-                        offset: counter
+                try {
+                    const data = (await _getTransactions({
+                        access_token: token,
+                        start_date: start,
+                        end_date: end,
+                        options: {
+                            count: 500,
+                            offset: counter
+                        }
+                    })).data;
+                    allTrans = [...allTrans, ...data.transactions];
+                    counter += data.transactions.length;
+                    hasMore = counter < data.total_transactions;
+                    console.log("got " + counter + " transactions of " + data.total_transactions + " total.");
+                } catch (e) {
+                    if (!forTraining && e instanceof AxiosError && e.response?.data.error_code === "ITEM_LOGIN_REQUIRED") {
+                        const institutionId = (await client.itemGet({ access_token: token })).data.item.institution_id;
+                        console.log("failued inst ID: " + institutionId);
+                        failedTokens.push({ token: token, iid: institutionId!, reason: "ITEM_LOGIN_REQUIRED" });
+                    } else {
+                        console.log("error getting transactions: ", e);
                     }
-                })).data
-                allTrans = [...allTrans, ...addXCategoryToTransactions(data.transactions)]
-                counter += data.transactions.length
-                hasMore = counter < data.total_transactions
-                console.log("got " + counter + " transactions of " + data.total_transactions + " total.")
+                    hasMore = false;
+                    failed = true;
+                }
             } while (hasMore);
+            if (!failed) {
+                successTokens.push(token);
+            }
         })
     );
+    if (failedTokens.length > 0) {
+        storeTroubledTokens(uid, failedTokens);
+    }
+    if (successTokens.length > 0) {
+        deleteTroubledTokens(uid, successTokens);
+    }
     return {
-        transactions: allTrans,
-        startDate: start,
-        endDate: end
-    } as UserTransactionEntry;
+        data: {
+            transactions: await addXCategoryToTransactions(allTrans),
+            startDate: start,
+            endDate: end
+        },
+        failures: failedTokens
+    } as ApiResponse<UserTransactionEntry>;
 }
 
 export async function getCategories(): Promise<string[]> {
-    return (await client.categoriesGet({})).data.categories.flatMap((category) => category.hierarchy);
+    return Array.from(new Set((await client.categoriesGet({})).data.categories.flatMap((category) => category.hierarchy)));
 }
 
 export async function getInstitution(institutionId: string) {

@@ -1,9 +1,10 @@
-import { initializeApp, applicationDefault, cert } from 'firebase-admin/app';
+import { initializeApp, applicationDefault } from 'firebase-admin/app';
 import { FieldValue, getFirestore, CollectionReference, DocumentData } from "firebase-admin/firestore";
 import { InvestmentsHoldingsGetResponse } from "plaid";
 import { UserInvestmentTransactionEntry, UserTransactionEntry } from './transaction';
 import { AccountLink } from './account_link';
 import { CryptoBalances, TokenBalance } from './crypto';
+import { TroubledToken } from './token';
 
 // Initialize Firebase
 initializeApp({
@@ -17,6 +18,7 @@ const transactionsCollection = db.collection('transactions');
 const investmentsCollection = db.collection('investments');
 const investmentTransactionsCollection = db.collection('investment_transactions');
 const cryptoCollection = db.collection('crypto');
+const troubledAccountsCollection = db.collection('troubled_tokens');
 
 const deleteUserData = (collection: CollectionReference<DocumentData>, userId: string) => collection.doc(userId).delete();
 
@@ -28,17 +30,82 @@ export async function getDbAccessTokens(userId: string): Promise<string[]> {
     } else {
         console.log('Got access tokens:', doc.data())
     }
-    return (doc.data() ?? {})['tokens']
+    const tokens = (doc.data() ?? {})['tokens'] ?? [];
+    return tokens.map((token: { iid: string, accessToken: string }) => token.accessToken);
 }
 
-export async function storeAccessToken(accessToken: String, userId: string) {
+export async function storeAccessToken(userId: string, iid: string, accessToken: string) {
     console.log("storing access token in firebase")
     const docRef = accessTokenCollection.doc(userId)
+    const doc = await docRef.get()
+    const existingTokens = doc.exists ? doc.data()?.tokens ?? [] : []
+
+    if (!existingTokens.includes(accessToken)) {
+        await docRef.set({
+            tokens: FieldValue.arrayUnion({ iid, accessToken })
+        }, {
+            merge: true
+        });
+    } else {
+        console.log("Access token already exists")
+        deleteTroubledTokens(userId, [accessToken])
+    }
+}
+
+export async function checkForExistingInstitutionLink(userId: string, iid: string): Promise<boolean> {
+    const doc = await accessTokenCollection.doc(userId).get()
+    if (!doc.exists) {
+        console.log('No access token document!')
+        return false
+    } else {
+        console.log('Got access tokens:', doc.data())
+    }
+    const tokens = (doc.data() ?? {})['tokens'];
+    return tokens.some((token: { iid: string }) => token.iid === iid);
+}
+
+export async function storeTroubledTokens(userId: string, token: TroubledToken[]) {
+    console.log("storing troubled token in firebase")
+    const docRef = troubledAccountsCollection.doc(userId)
     await docRef.set({
-        tokens: FieldValue.arrayUnion(accessToken)
+        tokens: FieldValue.arrayUnion(...token)
     }, {
         merge: true
     });
+}
+
+export async function getTroubledTokens(userId: string): Promise<TroubledToken[]> {
+    console.log("getting troubled tokens for: " + userId)
+    const userRef = (await troubledAccountsCollection.doc(userId).get()).data()
+    if (userRef) {
+        return userRef.tokens ? userRef.tokens as TroubledToken[] : []
+    }
+    return []
+}
+
+export async function deleteTroubledTokens(userId: string, tokens: string[]): Promise<void> {
+    console.log("deleting troubled tokens for user: " + userId)
+    const doc = await troubledAccountsCollection.doc(userId).get();
+    if (!doc.exists) {
+        console.log('No troubled tokens document found!');
+        return;
+    }
+
+    const currentTokens = doc.data()?.tokens ?? [];
+    const tokensToRemove = currentTokens.filter((t: TroubledToken) => tokens.includes(t.token));
+
+    if (tokensToRemove.length > 0) {
+        await troubledAccountsCollection.doc(userId).update({
+            tokens: FieldValue.arrayRemove(...tokensToRemove)
+        });
+    } else {
+        console.log('No matching tokens found to remove.');
+    }
+}
+
+export async function deleteAllTroubledTokens(userId: string): Promise<void> {
+    console.log("deleting all troubled tokens for user: " + userId)
+    await deleteUserData(troubledAccountsCollection, userId);
 }
 
 export async function deleteDbAccessTokens(userId: string): Promise<void> {
