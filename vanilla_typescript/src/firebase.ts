@@ -1,14 +1,21 @@
-import { initializeApp, applicationDefault } from 'firebase-admin/app';
+import { initializeApp, applicationDefault, cert, ServiceAccount } from 'firebase-admin/app';
 import { FieldValue, getFirestore, CollectionReference, DocumentData } from "firebase-admin/firestore";
 import { InvestmentsHoldingsGetResponse } from "plaid";
 import { UserInvestmentTransactionEntry, UserTransactionEntry } from './transaction';
 import { AccountLink } from './account_link';
 import { CryptoBalances, TokenBalance } from './crypto';
 import { TroubledToken } from './token';
+import dotenv from "dotenv";
 
 // Initialize Firebase
+dotenv.config();
 initializeApp({
-    credential: applicationDefault()
+    credential: cert({
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+        projectId: process.env.FIREBASE_PROJECT_ID,
+    } as ServiceAccount),
+    databaseURL: `https://${process.env.FIREBASE_PROJECT_ID}.firebaseio.com`,
 });
 
 const db = getFirestore();
