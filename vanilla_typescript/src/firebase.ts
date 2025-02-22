@@ -11,11 +11,11 @@ import dotenv from "dotenv";
 dotenv.config();
 initializeApp({
     credential: cert({
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-        projectId: process.env.FIREBASE_PROJECT_ID,
+        clientEmail: process.env.GCP_SERVICE_ACCOUNT_EMAIL,
+        privateKey: process.env.GCP_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+        projectId: process.env.GCP_PROJECT_ID,
     } as ServiceAccount),
-    databaseURL: `https://${process.env.FIREBASE_PROJECT_ID}.firebaseio.com`,
+    databaseURL: `https://${process.env.GCP_PROJECT_ID}.firebaseio.com`,
 });
 
 const db = getFirestore();
