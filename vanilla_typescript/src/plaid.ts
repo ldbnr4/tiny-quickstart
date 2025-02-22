@@ -101,11 +101,9 @@ export async function getAllAccounts(uid: string, accessTokens: string[], allAcc
                         || account.type === AccountType.Credit)
                 )
             } as AccountLink;
-            if (await isInvestmentsAvailable(token)) {
-                const investments = await getInvestments(token)
-                if (investments) {
-                    accountLink.accounts = accountLink.accounts.concat(convertInvestmentIntoAccounts(investments))
-                }
+            const investments = await getInvestments(token)
+            if (investments) {
+                accountLink.accounts = accountLink.accounts.concat(convertInvestmentIntoAccounts(investments))
             }
             allAccounts.push(accountLink)
         })
@@ -129,6 +127,7 @@ export async function isInvestmentsAvailable(accessToken: string) {
 }
 
 export async function getInvestments(accessToken: string) {
+    console.log("getting investments with token: " + accessToken);
     try {
         return (await client.investmentsHoldingsGet({
             access_token: accessToken,
