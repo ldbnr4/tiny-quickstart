@@ -212,7 +212,7 @@ app.get("/api/transactions", async (req: Request, res: Response, next: NextFunct
     const userId = getUserId(req);
     const results: ApiResponse<UserTransactionEntry> = await _getUserTransactions(
       userId, start, end, req.query.refresh == "true" ? true : false);
-    if (!results) {
+    if (!results || !results.data || !results.data.transactions) {
       console.log("Failed to get user transactions")
       next(new Error("Failed to get user transactions"));
       return;
@@ -290,7 +290,7 @@ app.get("/api/crypto_balances", async (req: Request, res: Response, next: NextFu
   try {
     const balances = await getDbCryptoBalances(userId);
     if (!balances) {
-      res.json(false);
+      res.json({});
       return;
     }
     if (balances.last_updated && moment().diff(moment(balances.last_updated), 'hours') < 24
